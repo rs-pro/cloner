@@ -16,7 +16,23 @@ module Cloner::Internal
     {}
   end
 
-  def local_auth(conf)
+  def conf
+    @conf ||= begin
+      YAML.load_file(Rails.root.join('config', 'mongoid.yml'))[Rails.env]['sessions']['default']
+    end
+  end
+
+  def r_conf
+    @r_conf ||= begin
+      Net::SSH.start(ssh_host, ssh_user, ssh_opts) do |ssh|
+        ret = ssh_exec!(ssh, "cat #{remote_app_path}/config/mongoid.yml")
+        check_ssh_err(ret)
+        YAML.load(ret[0])[env_from]['sessions']['default']
+      end
+    end
+  end
+
+  def local_auth
     if conf['password'].nil?
       ""
     else
@@ -65,22 +81,6 @@ module Cloner::Internal
     end
   end
 
-  def conf
-    @conf ||= begin
-      YAML.load_file(Rails.root.join('config', 'mongoid.yml'))[Rails.env]['sessions']['default']
-    end
-  end
-
-  def r_conf
-    @r_conf ||= begin
-      Net::SSH.start(ssh_host, ssh_user, ssh_opts) do |ssh|
-        ret = ssh_exec!(ssh, "cat #{remote_app_path}/config/mongoid.yml")
-        check_ssh_err(ret)
-        YAML.load(ret[0])[env_from]['sessions']['default']
-      end
-    end
-  end
-
   def db_dump_remote
     puts "backup remote DB via ssh"
     Net::SSH.start(ssh_host, ssh_user, ssh_opts) do |ssh|
@@ -96,11 +96,7 @@ module Cloner::Internal
 
   def db_dump_restore
     puts "restoring DB"
-    if Rails.env.staging?
-      restore = "mongorestore --drop -d #{db_to} -u #{remote_db_user} -p #{remote_db_pass} --authenticationDatabase admin #{db_path}"
-    else
-      restore = "mongorestore --drop -d #{db_to} #{local_auth(conf)} #{db_path}"
-    end
+    restore = "mongorestore --drop -d #{db_to} #{local_auth(conf)} #{db_path}"
     puts restore if verbose?
     pipe = IO.popen(restore)
     while (line = pipe.gets)
