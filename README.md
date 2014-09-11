@@ -35,9 +35,6 @@ create ```lib/tasks/dl.thor``` with following content:
         def ssh_user
           'tea'
         end
-        def ssh_opts
-          {}
-        end
         def remote_db_user
           'gleb'
         end
