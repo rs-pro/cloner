@@ -65,6 +65,10 @@ Run it:
 
 All functions from cloner/internal.rb can be overriden, for example:
 
+
+    def verbose?
+      false
+    end
     def env_from
       'production'
     end

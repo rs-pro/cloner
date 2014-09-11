@@ -6,6 +6,9 @@ module Cloner::Internal
     require rails_path
   end
 
+  def verbose?
+    false
+  end
   def env_from
     'production'
   end
@@ -85,7 +88,7 @@ module Cloner::Internal
       ret = ssh_exec!(ssh, "mkdir -p #{remote_dump_path}")
       check_ssh_err(ret)
       dump = "mongodump -u #{r_conf['username']} -p #{r_conf['password']} -d #{r_conf['database']} --authenticationDatabase #{r_conf['database']} -o #{remote_dump_path}"
-      puts dump
+      puts dump if verbose?
       ret = ssh_exec!(ssh, dump)
       check_ssh_err(ret)
     end
@@ -98,10 +101,10 @@ module Cloner::Internal
     else
       restore = "mongorestore --drop -d #{db_to} #{local_auth(conf)} #{db_path}"
     end
-    puts restore
+    puts restore if verbose?
     pipe = IO.popen(restore)
     while (line = pipe.gets)
-      print line
+      print line if verbose?
     end
   end
 
@@ -129,7 +132,7 @@ module Cloner::Internal
     puts "Running RSync: #{cmd}"
     pipe = IO.popen(cmd)
     while (line = pipe.gets)
-      print line
+      print line if verbose?
     end
     pipe.close
     ret = $?.to_i
