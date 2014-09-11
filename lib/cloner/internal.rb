@@ -96,7 +96,7 @@ module Cloner::Internal
 
   def db_dump_restore
     puts "restoring DB"
-    restore = "mongorestore --drop -d #{db_to} #{local_auth(conf)} #{db_path}"
+    restore = "mongorestore --drop -d #{db_to} #{local_auth} #{db_path}"
     puts restore if verbose?
     pipe = IO.popen(restore)
     while (line = pipe.gets)

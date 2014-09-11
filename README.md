@@ -35,9 +35,6 @@ create ```lib/tasks/dl.thor``` with following content:
         def ssh_user
           'tea'
         end
-        def remote_db_user
-          'gleb'
-        end
         def remote_dump_path
           '/data/tea/dump'
         end
