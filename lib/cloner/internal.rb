@@ -6,6 +6,13 @@ module Cloner::Internal
     require rails_path
   end
 
+  def env_from
+    'production'
+  end
+  def ssh_opts
+    {}
+  end
+
   def local_auth(conf)
     if conf['password'].nil?
       ""

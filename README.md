@@ -29,9 +29,6 @@ create ```lib/tasks/dl.thor``` with following content:
         def rails_path
           File.expand_path("../../../config/environment", __FILE__)
         end
-        def env_from
-          'production'
-        end
         def ssh_host
           'hottea.ru'
         end
@@ -66,6 +63,17 @@ Adjust it to your project and deployment.
 Run it:
 
     thor dl
+
+## Additional
+
+All functions from cloner/internal.rb can be overriden, for example:
+
+    def env_from
+      'production'
+    end
+    def ssh_opts
+      {}
+    end
 
 ## Contributing
 
