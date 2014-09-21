@@ -74,9 +74,9 @@ module Cloner::Internal
 
   def check_ssh_err(ret)
     if ret[2] != 0
-      puts "Error: SSH command exited with #{exit_code}"
-      puts stdout_data
-      puts stderr_data
+      puts "Error: SSH command exited with #{ret[2]}"
+      puts ret[0]
+      puts ret[1]
       exit 1
     end
   end
