@@ -36,7 +36,7 @@ module Cloner::Internal
     if conf['password'].nil?
       ""
     else
-      "-u #{conf['username']} -p #{conf['password']}]"
+      "-u #{conf['username']} -p #{conf['password']}"
     end
   end
 
@@ -101,6 +101,10 @@ module Cloner::Internal
     pipe = IO.popen(restore)
     while (line = pipe.gets)
       print line if verbose?
+    end
+    ret = $?.to_i
+    if ret != 0 
+      puts "Error: local command exited with #{ret}"
     end
   end
 
