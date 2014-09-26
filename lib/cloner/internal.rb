@@ -10,7 +10,7 @@ module Cloner::Internal
     false
   end
   def env_from
-    'production'
+    ENV['CLONE_FROM'] || 'production'
   end
   def ssh_opts
     {}
