@@ -7,6 +7,10 @@ module Cloner::MongoDB
     end
   end
 
+  def mongodb_to
+    mongodb_conf['database']
+  end
+
   def mongodb_r_conf
     @r_conf ||= begin
       Net::SSH.start(ssh_host, ssh_user, ssh_opts) do |ssh|
@@ -53,16 +57,12 @@ module Cloner::MongoDB
   end
 
   def mongodb_path
-    Rails.root.join("tmp", "dump", db_to).to_s
-  end
-
-  def mongodb_to
-    conf['database']
+    Rails.root.join("tmp", "dump", mongodb_to).to_s
   end
 
   def mongodb_dump_copy
-    `mkdir -p #{db_path}`
-    rsync("#{remote_dump_path}/#{r_conf['database']}", db_path)
+    `mkdir -p #{mongodb_path}`
+    rsync("#{remote_dump_path}/#{mongodb_r_conf['database']}", mongodb_path)
   end
 
   def clone_mongodb
