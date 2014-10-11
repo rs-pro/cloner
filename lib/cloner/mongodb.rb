@@ -61,7 +61,7 @@ module Cloner::MongoDB
   end
 
   def mongodb_dump_copy
-    `mkdir -p #{mongodb_path}`
+    FileUtils.mkdir_p(mongodb_path)
     rsync("#{remote_dump_path}/#{mongodb_r_conf['database']}", mongodb_path)
   end
 
