@@ -8,6 +8,7 @@ module Cloner::Postgres
   end
 
   def ar_to
+    p ar_conf
     ar_conf['database']
   end
 
@@ -52,7 +53,8 @@ module Cloner::Postgres
 
   def pg_dump_restore
     puts "restoring DB"
-    restore = pg_local_auth + "pg_restore -Fc -U #{ar_conf['username']} -d #{ar_to} #{pg_path}/tmp.bak"
+    restore = pg_local_auth + "pg_restore -Fc -c -U #{ar_conf['username']} -d #{ar_to} #{pg_path}/tmp.bak"
+    puts restore
     puts restore if verbose?
     pipe = IO.popen(restore)
     while (line = pipe.gets)
