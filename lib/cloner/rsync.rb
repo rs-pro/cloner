@@ -1,7 +1,7 @@
 module Cloner::RSync
   extend ActiveSupport::Concern
   def rsync(from, to)
-    cmd = "rsync -e ssh -zutvr --checksum #{ssh_user}@#{ssh_host}:#{from}/ #{to}/"
+    cmd = "rsync -e ssh -zutvr --checksum #{e ssh_user}@#{e ssh_host}:#{e from}/ #{e to}/"
     puts "Running RSync: #{cmd}"
     pipe = IO.popen(cmd)
     while (line = pipe.gets)

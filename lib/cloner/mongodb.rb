@@ -14,7 +14,7 @@ module Cloner::MongoDB
   def mongodb_r_conf
     @r_conf ||= begin
       Net::SSH.start(ssh_host, ssh_user, ssh_opts) do |ssh|
-        ret = ssh_exec!(ssh, "cat #{remote_app_path}/config/mongoid.yml")
+        ret = ssh_exec!(ssh, "cat #{e(remote_app_path + '/config/mongoid.yml')}")
         check_ssh_err(ret)
         YAML.load(ret[0])[env_from]['sessions']['default']
       end
@@ -25,7 +25,7 @@ module Cloner::MongoDB
     if mongodb_conf['password'].nil?
       ""
     else
-      "-u #{mongodb_conf['username']} -p #{mongodb_conf['password']}"
+      "-u #{e mongodb_conf['username']} -p #{e mongodb_conf['password']}"
     end
   end
 
@@ -35,7 +35,7 @@ module Cloner::MongoDB
       ssh.exec!("rm -R #{remote_dump_path}")
       ret = ssh_exec!(ssh, "mkdir -p #{remote_dump_path}")
       check_ssh_err(ret)
-      dump = "mongodump -u #{mongodb_r_conf['username']} -p #{mongodb_r_conf['password']} -d #{mongodb_r_conf['database']} --authenticationDatabase #{mongodb_r_conf['database']} -o #{remote_dump_path}"
+      dump = "mongodump -u #{e mongodb_r_conf['username']} -p #{e mongodb_r_conf['password']} -d #{e mongodb_r_conf['database']} --authenticationDatabase #{e mongodb_r_conf['database']} -o #{e remote_dump_path}"
       puts dump if verbose?
       ret = ssh_exec!(ssh, dump)
       check_ssh_err(ret)
@@ -44,7 +44,7 @@ module Cloner::MongoDB
 
   def mongodb_dump_restore
     puts "restoring DB"
-    restore = "mongorestore --drop -d #{mongodb_to} #{mongodb_local_auth} #{mongodb_path}"
+    restore = "mongorestore --drop -d #{e mongodb_to} #{mongodb_local_auth} #{e mongodb_path}"
     puts restore if verbose?
     pipe = IO.popen(restore)
     while (line = pipe.gets)

@@ -5,6 +5,10 @@ module Cloner::Internal
   include Cloner::SSH
   include Cloner::RSync
 
+  def e(str)
+    Shellwords.escape(str)
+  end
+
   def load_env
     unless defined?(Rails)
       require rails_path
