@@ -54,7 +54,8 @@ module Cloner::Postgres
 
   def pg_dump_restore
     puts "restoring DB"
-    restore = pg_local_auth + "pg_restore -Fc -c -U #{e ar_conf['username']} -d #{e ar_to} #{e(pg_path + '/tmp.bak')}"
+    host = ar_conf['host'].present? ? "-h #{e ar_conf['host']}" : ""
+    restore = pg_local_auth + "pg_restore -Fc -c -U #{e ar_conf['username']} #{host} -d #{e ar_to} #{e(pg_path + '/tmp.bak')}"
     puts restore
     puts restore if verbose?
     pipe = IO.popen(restore)
