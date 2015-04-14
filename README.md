@@ -1,6 +1,6 @@
 # Cloner
 
-Easily clone your production Mongoid database and files for local development
+Easily clone your production Mongoid or PostgreSQL database and files for local development or staging area.
 
 ## Installation
 
