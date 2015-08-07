@@ -3,7 +3,12 @@ module Cloner::MongoDB
 
   def mongodb_conf
     @conf ||= begin
-      YAML.load_file(Rails.root.join('config', 'mongoid.yml'))[Rails.env]['sessions']['default']
+      yml = YAML.load_file(Rails.root.join('config', 'mongoid.yml'))[Rails.env]
+      if yml.key?('sessions')
+        yml['sessions']['default']
+      else
+        yml['clients']['default']
+      end
     end
   end
 
@@ -16,7 +21,12 @@ module Cloner::MongoDB
       Net::SSH.start(ssh_host, ssh_user, ssh_opts) do |ssh|
         ret = ssh_exec!(ssh, "cat #{e(remote_app_path + '/config/mongoid.yml')}")
         check_ssh_err(ret)
-        YAML.load(ret[0])[env_from]['sessions']['default']
+        yml = YAML.load(ret[0])[env_from]
+        if yml.key?('sessions')
+          yml['sessions']['default']
+        else
+          yml['clients']['default']
+        end
       end
     end
   end
