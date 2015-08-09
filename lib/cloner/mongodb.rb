@@ -47,7 +47,12 @@ module Cloner::MongoDB
       ssh.exec!("rm -R #{remote_dump_path}")
       ret = ssh_exec!(ssh, "mkdir -p #{remote_dump_path}")
       check_ssh_err(ret)
-      dump = "mongodump -u #{e mongodb_r_conf['username']} -p #{e mongodb_r_conf['password']} -d #{e mongodb_r_conf['database']} --authenticationDatabase #{e mongodb_r_conf['database']} -o #{e remote_dump_path}"
+      if mongodb_r_conf['options'].present? && mongodb_r_conf['options']['password'].present?
+        username, password = mongodb_r_conf['options']['user'], mongodb_r_conf['options']['password']
+      else
+        username, password = mongodb_r_conf['username'], mongodb_r_conf['password']
+      end
+      dump = "mongodump -u #{e username} -p #{e password} -d #{e mongodb_r_conf['database']} --authenticationDatabase #{e mongodb_r_conf['database']} -o #{e remote_dump_path}"
       puts dump if verbose?
       ret = ssh_exec!(ssh, dump)
       check_ssh_err(ret)
