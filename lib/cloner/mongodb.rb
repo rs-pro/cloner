@@ -32,10 +32,12 @@ module Cloner::MongoDB
   end
 
   def mongodb_local_auth
-    if mongodb_conf['password'].nil?
-      ""
-    else
+    if mongodb_conf['options'].present? && mongodb_conf['password'].present?
+      "-u #{e mongodb_conf['options']['user']} -p #{e mongodb_conf['options']['password']}"
+    elsif mongodb_conf['password'].present?
       "-u #{e mongodb_conf['username']} -p #{e mongodb_conf['password']}"
+    else
+      ""
     end
   end
 
