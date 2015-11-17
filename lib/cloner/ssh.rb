@@ -5,6 +5,12 @@ module Cloner::SSH
     {}
   end
 
+  def do_ssh(&block)
+    Net::SSH.start(ssh_host, ssh_user, ssh_opts) do |ssh|
+      yield ssh
+    end
+  end
+
   # http://stackoverflow.com/questions/3386233/how-to-get-exit-status-with-rubys-netssh-library
   def ssh_exec!(ssh, command)
     stdout_data = ""
@@ -46,3 +52,4 @@ module Cloner::SSH
     end
   end
 end
+

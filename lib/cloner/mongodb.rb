@@ -18,10 +18,19 @@ module Cloner::MongoDB
 
   def mongodb_r_conf
     @r_conf ||= begin
-      Net::SSH.start(ssh_host, ssh_user, ssh_opts) do |ssh|
+      do_ssh do |ssh|
         ret = ssh_exec!(ssh, "cat #{e(remote_app_path + '/config/mongoid.yml')}")
         check_ssh_err(ret)
-        yml = YAML.load(ret[0])[env_from]
+
+        begin
+          yml = YAML.load(ret[0])[env_from]
+          raise 'no data' if yml.blank?
+        rescue Exception => e
+          puts "unable to read remote database.yml for env #{env_from}."
+          puts "Remote file contents:"
+          puts ret[0]
+        end
+
         if yml.key?('sessions')
           yml['sessions']['default']
         else
@@ -43,7 +52,7 @@ module Cloner::MongoDB
 
   def mongodb_dump_remote
     puts "backup remote DB via ssh"
-    Net::SSH.start(ssh_host, ssh_user, ssh_opts) do |ssh|
+    do_ssh do |ssh|
       ssh.exec!("rm -R #{remote_dump_path}")
       ret = ssh_exec!(ssh, "mkdir -p #{remote_dump_path}")
       check_ssh_err(ret)
