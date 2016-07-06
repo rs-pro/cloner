@@ -19,7 +19,7 @@ module Cloner::Postgres
         begin
           res = YAML.load(ret[0])[env_from]
           raise 'no data' if res.blank?
-          res['host'] ||= '127.0.0.1'
+          #res['host'] ||= '127.0.0.1'
         rescue Exception => e
           puts "unable to read remote database.yml for env #{env_from}."
           puts "Remote file contents:"
