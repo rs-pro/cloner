@@ -46,6 +46,10 @@ module Cloner::Postgres
     end
   end
 
+  def pg_dump_extra
+    ""
+  end
+
   def pg_dump_remote
     puts "backup remote DB via ssh"
     do_ssh do |ssh|
@@ -53,7 +57,7 @@ module Cloner::Postgres
       ret = ssh_exec!(ssh, "mkdir -p #{e remote_dump_path}")
       check_ssh_err(ret)
       host = ar_r_conf['host'].present? ? "-h #{e ar_r_conf['host']}" : ""
-      dump = pg_remote_auth + "pg_dump -Fc -U #{e ar_r_conf['username']} #{host} #{e ar_r_conf['database']} > #{e(remote_dump_path + '/tmp.bak')}"
+      dump = pg_remote_auth + "pg_dump -Fc #{pg_dump_extra} -U #{e ar_r_conf['username']} #{host} #{e ar_r_conf['database']} > #{e(remote_dump_path + '/tmp.bak')}"
       puts dump if verbose?
       ret = ssh_exec!(ssh, dump)
       check_ssh_err(ret)

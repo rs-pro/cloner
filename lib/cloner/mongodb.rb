@@ -50,6 +50,10 @@ module Cloner::MongoDB
     end
   end
 
+  def mongodb_dump_extra
+    ""
+  end
+
   def mongodb_dump_remote
     puts "backup remote DB via ssh"
     do_ssh do |ssh|
@@ -61,7 +65,7 @@ module Cloner::MongoDB
       else
         username, password = mongodb_r_conf['username'], mongodb_r_conf['password']
       end
-      dump = "mongodump -u #{e username} -p #{e password} -d #{e mongodb_r_conf['database']} --authenticationDatabase #{e mongodb_r_conf['database']} -o #{e remote_dump_path}"
+      dump = "mongodump -u #{e username} -p #{e password} -d #{e mongodb_r_conf['database']} --authenticationDatabase #{e mongodb_r_conf['database']} -o #{e remote_dump_path} #{mongodb_dump_extra}"
       puts dump if verbose?
       ret = ssh_exec!(ssh, dump)
       check_ssh_err(ret)
