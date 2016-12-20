@@ -56,8 +56,9 @@ module Cloner::Postgres
       ssh.exec!("rm -R #{e remote_dump_path}")
       ret = ssh_exec!(ssh, "mkdir -p #{e remote_dump_path}")
       check_ssh_err(ret)
-      host = ar_r_conf['host'].present? ? "-h #{e ar_r_conf['host']}" : ""
-      dump = pg_remote_auth + "pg_dump -Fc #{pg_dump_extra} -U #{e ar_r_conf['username']} #{host} #{e ar_r_conf['database']} > #{e(remote_dump_path + '/tmp.bak')}"
+      host = ar_r_conf['host'].present? ? " -h #{e ar_r_conf['host']}" : ""
+      port = ar_r_conf['port'].present? ? " -p #{e ar_r_conf['port']}" : ""
+      dump = pg_remote_auth + "pg_dump -Fc #{pg_dump_extra} -U #{e ar_r_conf['username']}#{host}#{port} #{e ar_r_conf['database']} > #{e(remote_dump_path + '/tmp.bak')}"
       puts dump if verbose?
       ret = ssh_exec!(ssh, dump)
       check_ssh_err(ret)
@@ -66,8 +67,9 @@ module Cloner::Postgres
 
   def pg_dump_restore
     puts "restoring DB"
-    host = ar_conf['host'].present? ? "-h #{e ar_conf['host']}" : ""
-    restore = pg_local_auth + "pg_restore --no-owner -Fc -c -U #{e ar_conf['username']} #{host} -d #{e ar_to} #{e(pg_path + '/tmp.bak')}"
+    host = ar_conf['host'].present? ? " -h #{e ar_conf['host']}" : ""
+    port = ar_conf['port'].present? ? " -p #{e ar_conf['port']}" : ""
+    restore = pg_local_auth + "pg_restore --no-owner -Fc -c -U #{e ar_conf['username']}#{host}#{port} -d #{e ar_to} #{e(pg_path + '/tmp.bak')}"
     puts restore if verbose?
     pipe = IO.popen(restore)
     while (line = pipe.gets)
