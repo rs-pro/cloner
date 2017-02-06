@@ -10,7 +10,7 @@ module Cloner::RSync
     end
     pipe.close
     ret = $?.to_i
-    if ret != 0 
+    if ret != 0
       puts "Error: local command exited with #{ret}"
     end
   end

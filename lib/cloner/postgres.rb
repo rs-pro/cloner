@@ -1,37 +1,8 @@
 module Cloner::Postgres
   extend ActiveSupport::Concern
 
-  def ar_conf
-    @conf ||= begin
-      YAML.load_file(Rails.root.join('config', 'database.yml'))[Rails.env]
-    end
-  end
-
-  def ar_to
-    ar_conf['database']
-  end
-
-  def ar_r_conf
-    @ar_r_conf ||= begin
-      do_ssh do |ssh|
-        ret = ssh_exec!(ssh, "cat #{e(remote_app_path + '/config/database.yml')}")
-        check_ssh_err(ret)
-        begin
-          res = YAML.load(ret[0])[env_from]
-          raise 'no data' if res.blank?
-          #res['host'] ||= '127.0.0.1'
-        rescue Exception => e
-          puts "unable to read remote database.yml for env #{env_from}."
-          puts "Remote file contents:"
-          puts ret[0]
-        end
-        res
-      end
-    end
-  end
-
   def pg_local_auth
-    if ar_conf['password'].nil?
+    if ar_conf['password'].blank?
       ""
     else
       "PGPASSWORD='#{ar_conf['password']}' "
@@ -39,7 +10,7 @@ module Cloner::Postgres
   end
 
   def pg_remote_auth
-    if ar_r_conf['password'].nil?
+    if ar_r_conf['password'].blank?
       ""
     else
       "PGPASSWORD='#{ar_r_conf['password']}' "
@@ -48,6 +19,17 @@ module Cloner::Postgres
 
   def pg_dump_extra
     ""
+  end
+
+  def pg_dump_param
+    if pg_dump_extra != ""
+      puts "WARN pg_dump_extra is deprecated, use def pg_dump_param; super + ' extra'"
+    end
+    "-Fc #{pg_dump_extra}"
+  end
+
+  def pg_restore_param
+    "--no-owner -Fc -c"
   end
 
   def pg_bin_path(util)
@@ -62,7 +44,7 @@ module Cloner::Postgres
       check_ssh_err(ret)
       host = ar_r_conf['host'].present? ? " -h #{e ar_r_conf['host']}" : ""
       port = ar_r_conf['port'].present? ? " -p #{e ar_r_conf['port']}" : ""
-      dump = pg_remote_auth + "#{pg_bin_path 'pg_dump'} -Fc #{pg_dump_extra} -U #{e ar_r_conf['username']}#{host}#{port} #{e ar_r_conf['database']} > #{e(remote_dump_path + '/tmp.bak')}"
+      dump = pg_remote_auth + "#{pg_bin_path 'pg_dump'} #{pg_dump_param} -U #{e ar_r_conf['username']}#{host}#{port} #{e ar_r_conf['database']} > #{e(remote_dump_path + '/tmp.bak')}"
       puts dump if verbose?
       ret = ssh_exec!(ssh, dump)
       check_ssh_err(ret)
@@ -73,14 +55,14 @@ module Cloner::Postgres
     puts "restoring DB"
     host = ar_conf['host'].present? ? " -h #{e ar_conf['host']}" : ""
     port = ar_conf['port'].present? ? " -p #{e ar_conf['port']}" : ""
-    restore = pg_local_auth + "#{pg_bin_path 'pg_restore'} --no-owner -Fc -c -U #{e ar_conf['username']}#{host}#{port} -d #{e ar_to} #{e(pg_path + '/tmp.bak')}"
+    restore = pg_local_auth + "#{pg_bin_path 'pg_restore'} #{pg_restore_param} -U #{e ar_conf['username']}#{host}#{port} -d #{e ar_to} #{e(pg_path + '/tmp.bak')}"
     puts restore if verbose?
     pipe = IO.popen(restore)
     while (line = pipe.gets)
       print line if verbose?
     end
     ret = $?.to_i
-    if ret != 0 
+    if ret != 0
       puts "Error: local command exited with #{ret}"
     end
   end

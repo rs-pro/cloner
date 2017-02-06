@@ -1,7 +1,9 @@
 module Cloner::Internal
   extend ActiveSupport::Concern
   include Cloner::MongoDB
+  include Cloner::Ar
   include Cloner::Postgres
+  include Cloner::MySQL
   include Cloner::SSH
   include Cloner::RSync
 
@@ -27,7 +29,7 @@ module Cloner::Internal
     if defined?(Mongoid)
       clone_mongodb
     else
-      clone_pg
+      clone_ar
     end
   end
 end
