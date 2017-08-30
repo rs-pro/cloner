@@ -32,9 +32,13 @@ module Cloner::Postgres
     "--no-owner -Fc -c"
   end
 
-  def pg_bin_path(util)
+  def pg_local_bin_path(util)
     util
   end
+  
+  def pg_remote_bin_path(util)
+    util
+  end 
 
   def pg_dump_remote
     puts "backup remote DB via ssh"
@@ -44,7 +48,7 @@ module Cloner::Postgres
       check_ssh_err(ret)
       host = ar_r_conf['host'].present? ? " -h #{e ar_r_conf['host']}" : ""
       port = ar_r_conf['port'].present? ? " -p #{e ar_r_conf['port']}" : ""
-      dump = pg_remote_auth + "#{pg_bin_path 'pg_dump'} #{pg_dump_param} -U #{e ar_r_conf['username']}#{host}#{port} #{e ar_r_conf['database']} > #{e(remote_dump_path + '/tmp.bak')}"
+      dump = pg_remote_auth + "#{pg_remote_bin_path 'pg_dump'} #{pg_dump_param} -U #{e ar_r_conf['username']}#{host}#{port} #{e ar_r_conf['database']} > #{e(remote_dump_path + '/tmp.bak')}"
       puts dump if verbose?
       ret = ssh_exec!(ssh, dump)
       check_ssh_err(ret)
@@ -55,7 +59,7 @@ module Cloner::Postgres
     puts "restoring DB"
     host = ar_conf['host'].present? ? " -h #{e ar_conf['host']}" : ""
     port = ar_conf['port'].present? ? " -p #{e ar_conf['port']}" : ""
-    restore = pg_local_auth + "#{pg_bin_path 'pg_restore'} #{pg_restore_param} -U #{e ar_conf['username']}#{host}#{port} -d #{e ar_to} #{e(pg_path + '/tmp.bak')}"
+    restore = pg_local_auth + "#{pg_local_bin_path 'pg_restore'} #{pg_restore_param} -U #{e ar_conf['username']}#{host}#{port} -d #{e ar_to} #{e(pg_path + '/tmp.bak')}"
     puts restore if verbose?
     pipe = IO.popen(restore)
     while (line = pipe.gets)
