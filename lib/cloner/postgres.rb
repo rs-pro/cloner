@@ -31,13 +31,17 @@ module Cloner::Postgres
   def pg_restore_param
     "--no-owner -Fc -c"
   end
+  
+  def pg_bin_path(util)
+    util
+  end
 
   def pg_local_bin_path(util)
-    util
+    pg_bin_path(util)
   end
   
   def pg_remote_bin_path(util)
-    util
+    pg_bin_path(util)
   end 
 
   def pg_dump_remote
