@@ -1,0 +1,62 @@
+require 'cloner'
+
+class Dl < Cloner::Base
+  no_commands do
+    def rails_path
+      File.expand_path("../../../config/environment", __FILE__)
+    end
+    def stages
+      @_stages ||= {
+        production: {
+          ssh_host: 'production.example.com',
+          ssh_user: 'example'
+        },
+        staging: {
+          ssh_host: 'production.example.com',
+          ssh_user: 'example'
+        }
+      }
+    end
+    def ssh_host
+      stages.dig(options[:from].to_sym, :ssh_host)
+    end
+    def ssh_user
+      stages.dig(options[:from].to_sym, :ssh_user)
+    end
+    def remote_dump_path
+      '/data/<%= @username %>/dump'
+    end
+    def remote_app_path
+      '/data/<%= @username %>/app/current'
+    end
+  end
+
+  class_option :from, default: 'production', type: :string
+
+  desc "download", "clone files and DB from production"
+  method_option :skip_database,
+                default: false,
+                type: :boolean,
+                aliases: '-D',
+                desc: 'skip clone database'
+  method_option :skip_files,
+                default: false,
+                type: :boolean,
+                aliases: '-F',
+                desc: 'skip clone files'
+  def download
+    load_env
+    if options[:skip_database]
+      say "Skip clone database!", :yellow
+    else
+      clone_db
+    end
+
+    if options[:skip_files]
+      say "Skip clone files!", :yellow
+    else
+      rsync_public("ckeditor_assets")
+      rsync_public("uploads")
+    end
+  end
+end

@@ -65,6 +65,19 @@ Run it:
 
     thor dl
 
+
+If you generate extended cloner template as: `rails g cloner -e`,
+you can run `thor dl` with additional parameters, for example:
+```
+bundle exec thor dl -D # For skip clone database
+bundle exec thor dl -F # For skip clone files
+```
+
+For details see help:
+```
+bundle exec thor help dl:download
+```
+
 ## Additional
 
 All functions from cloner/internal.rb can be overriden, for example:
