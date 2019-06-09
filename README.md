@@ -20,37 +20,44 @@ Or install it yourself as:
 
 ## Usage
 
-create ```lib/tasks/dl.thor``` with following content:
+For generate cloner base template, run:
 
-    require 'cloner'
+```
+bundle exec rails generate cloner
+```
 
-    class Dl < Cloner::Base
-      no_commands do
-        def rails_path
-          File.expand_path("../../../config/environment", __FILE__)
-        end
-        def ssh_host
-          'hottea.ru'
-        end
-        def ssh_user
-          'tea'
-        end
-        def remote_dump_path
-          '/data/tea/dump'
-        end
-        def remote_app_path
-          "/data/tea/app/current"
-        end
-      end
+This is create `lib/tasks/dl.thor` file with following content:
+```ruby
+require 'cloner'
 
-      desc "download", "clone files and DB from production"
-      def download
-        load_env
-        clone_db
-        rsync_public("ckeditor_assets")
-        rsync_public("uploads")
-      end
+class Dl < Cloner::Base
+  no_commands do
+    def rails_path
+      File.expand_path("../../../config/environment", __FILE__)
     end
+    def ssh_host
+      'hottea.ru'
+    end
+    def ssh_user
+      'tea'
+    end
+    def remote_dump_path
+      '/data/tea/dump'
+    end
+    def remote_app_path
+      "/data/tea/app/current"
+    end
+  end
+
+  desc "download", "clone files and DB from production"
+  def download
+    load_env
+    clone_db
+    rsync_public("ckeditor_assets")
+    rsync_public("uploads")
+  end
+end
+```
 
 Adjust it to your project and deployment.
 
