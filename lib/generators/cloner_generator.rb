@@ -19,7 +19,7 @@ class ClonerGenerator < Rails::Generators::Base
 
   def create_extended_task_file
     say 'Create extend file'
-    @username = 'USERNAME' # TODO ask username
+    @username = Rails.application.class.parent_name.downcase
     template 'cloner_extend.thor.erb', 'lib/tasks/dl.thor'
   end
 end

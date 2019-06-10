@@ -76,6 +76,17 @@ bundle exec thor dl -F # For skip clone files
 For details see help:
 ```
 bundle exec thor help dl:download
+
+Usage:
+  thor dl:download
+
+Options:
+      [--from=FROM]                            # stage name where cloner get data
+                                               # Default: production
+  -D, [--skip-database], [--no-skip-database]  # skip clone database
+  -F, [--skip-files], [--no-skip-files]        # skip clone files
+
+clone files and DB from production
 ```
 
 ## Additional
