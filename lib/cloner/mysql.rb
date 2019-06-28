@@ -44,8 +44,8 @@ module Cloner::MySQL
 
   def my_dump_restore
     puts "restoring DB"
-    host = ar_conf['host'].present? ? " -h #{e ar_conf['host']}" : ""
-    port = ar_conf['port'].present? ? " -p #{e ar_conf['port']}" : ""
+    host = ar_conf['host'].present? ? " --host #{e ar_conf['host']}" : ""
+    port = ar_conf['port'].present? ? " --port #{e ar_conf['port']}" : ""
     restore = "#{my_bin_path 'mysql'} #{my_restore_param} --user #{e ar_conf['username']} #{my_local_auth}#{host}#{port} #{e ar_to} < #{e(my_path + '/cloner.sql')}"
     puts restore if verbose?
     pipe = IO.popen(restore)
