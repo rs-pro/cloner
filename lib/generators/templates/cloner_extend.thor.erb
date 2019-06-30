@@ -1,0 +1,72 @@
+require 'cloner'
+
+class Dl < Cloner::Base
+  no_commands do
+    def rails_path
+      File.expand_path("../../../config/environment", __FILE__)
+    end
+    def stages
+      @_stages ||= {
+        # TODO: Add new stages here if you needed
+        production: {
+          # TODO: Fix production settings
+          ssh_host: 'production.example.com',
+          ssh_user: '<%= @username %>'
+        },
+        staging: {
+          # TODO: Fix staging settings
+          ssh_host: 'production.example.com',
+          ssh_user: '<%= @username %>'
+        }
+      }
+    end
+    def ssh_host
+      stages.dig(options[:from].to_sym, :ssh_host)
+    end
+    def ssh_user
+      stages.dig(options[:from].to_sym, :ssh_user)
+    end
+    def remote_dump_path
+      # TODO: Fix remote dump path
+      '/data/<%= @username %>/dump'
+    end
+    def remote_app_path
+      # TODO: Fix remote app path
+      '/data/<%= @username %>/app/current'
+    end
+  end
+
+  class_option :from,
+               default: 'production',
+               type: :string,
+               desc: 'stage name where cloner get data'
+  class_option :skip_database,
+               default: false,
+               type: :boolean,
+               aliases: '-D',
+               desc: 'skip clone database'
+  class_option :skip_files,
+               default: false,
+               type: :boolean,
+               aliases: '-F',
+               desc: 'skip clone files'
+
+  desc "download", "clone files and DB from production"
+  def download
+    load_env
+    say "Clone from: #{options[:from]}", :green
+    if options[:skip_database]
+      say "Skip clone database!", :yellow
+    else
+      clone_db
+    end
+
+    if options[:skip_files]
+      say "Skip clone files!", :yellow
+    else
+      # TODO: Fix folders for synchronization here
+      rsync_public("ckeditor_assets")
+      rsync_public("uploads")
+    end
+  end
+end
