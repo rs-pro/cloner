@@ -2,6 +2,9 @@
 
 Easily clone your production Mongoid or PostgreSQL / MySQL database and files for local development or staging area.
 
+Uses rsync and database-specific default dump/restore tools (pg_dump/pg_restore, mysqldump/mysql, mongodump/mongorestore)
+
+
 ## Installation
 
 Add this line to your application's Gemfile:
@@ -103,6 +106,21 @@ All functions from cloner/internal.rb can be overriden, for example:
     def ssh_opts
       {}
     end
+
+## Changelog
+
+### 0.8.0
+
+- Change default rsync flags - -z to -zz to support newer versions of rsync
+- Allow overriding rsync flags via ```rsync_flags``` and ```rsync_compression```
+
+### 0.7.0
+
+- Add thor file generators
+
+### 0.6.0
+
+- Support MySQL
 
 ## Contributing
 

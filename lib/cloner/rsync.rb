@@ -1,8 +1,17 @@
 module Cloner::RSync
   extend ActiveSupport::Concern
-  def rsync(from, to)
+
+  def rsync_compression
+    "-zz"
+  end
+
+  def rsync_flags
     port = ssh_opts[:port] || 22
-    cmd = "rsync -e ssh -zutvr --checksum -e \"ssh -p #{port}\" #{e ssh_user}@#{e ssh_host}:#{e from}/ #{e to}/"
+    "#{rsync_compression} -utvr --checksum -e \"ssh -p #{port}\""
+  end
+
+  def rsync(from, to)
+    cmd = "rsync #{e rsync_flags} #{e ssh_user}@#{e ssh_host}:#{e from}/ #{e to}/"
     puts "Running RSync: #{cmd}"
     pipe = IO.popen(cmd)
     while (line = pipe.gets)
