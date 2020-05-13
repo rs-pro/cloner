@@ -11,7 +11,7 @@ module Cloner::RSync
   end
 
   def rsync(from, to)
-    cmd = "rsync #{e rsync_flags} #{e ssh_user}@#{e ssh_host}:#{e from}/ #{e to}/"
+    cmd = "rsync #{rsync_flags} #{e ssh_user}@#{e ssh_host}:#{e from}/ #{e to}/"
     puts "Running RSync: #{cmd}"
     pipe = IO.popen(cmd)
     while (line = pipe.gets)
