@@ -109,6 +109,11 @@ All functions from cloner/internal.rb can be overriden, for example:
 
 ## Changelog
 
+### 0.9.0
+
+- Add option to rsync to allow sync one file (thx @AnatolyShirykalov)
+- Add env_database to allow overriding database env (thx @Yarroo)
+
 ### 0.8.0
 
 - Change default rsync flags - -z to -zz to support newer versions of rsync
