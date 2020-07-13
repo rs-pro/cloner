@@ -10,8 +10,12 @@ module Cloner::RSync
     "#{rsync_compression} -utvr --checksum -e \"ssh -p #{port}\""
   end
 
-  def rsync(from, to)
-    cmd = "rsync #{rsync_flags} #{e ssh_user}@#{e ssh_host}:#{e from}/ #{e to}/"
+  def rsync(from, to, directory: true, raise_on_error: false)
+    if directory
+      from = "#{from}/" unless from.ends_with?('/')
+      to = "#{to}/" unless to.ends_with?('/')
+    end
+    cmd = "rsync #{rsync_flags} #{e ssh_user}@#{e ssh_host}:#{e from} #{e to}"
     puts "Running RSync: #{cmd}"
     pipe = IO.popen(cmd)
     while (line = pipe.gets)
@@ -20,6 +24,9 @@ module Cloner::RSync
     pipe.close
     ret = $?.to_i
     if ret != 0
+      if raise_on_error
+        raise "Error: local command exited with #{ret}"
+      end
       puts "Error: local command exited with #{ret}"
     end
   end

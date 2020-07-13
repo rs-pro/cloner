@@ -82,7 +82,7 @@ module Cloner::Postgres
   def pg_dump_copy
     FileUtils.mkdir_p(pg_path)
     `mkdir -p #{e pg_path}`
-    rsync(remote_dump_path + '/', pg_path)
+    rsync(remote_dump_path, pg_path)
   end
 
   def clone_pg
