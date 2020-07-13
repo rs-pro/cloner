@@ -10,7 +10,7 @@ module Cloner::RSync
     "#{rsync_compression} -utvr --checksum -e \"ssh -p #{port}\""
   end
 
-  def rsync(from, to, directory: true)
+  def rsync(from, to, directory: true, raise_on_error: false)
     if directory
       from = "#{from}/" unless from.ends_with?('/')
       to = "#{to}/" unless to.ends_with?('/')
@@ -24,6 +24,9 @@ module Cloner::RSync
     pipe.close
     ret = $?.to_i
     if ret != 0
+      if raise_on_error
+        raise "Error: local command exited with #{ret}"
+      end
       puts "Error: local command exited with #{ret}"
     end
   end
