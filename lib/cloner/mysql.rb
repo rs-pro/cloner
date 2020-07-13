@@ -65,7 +65,7 @@ module Cloner::MySQL
   def my_dump_copy
     FileUtils.mkdir_p(my_path)
     `mkdir -p #{e my_path}`
-    rsync(remote_dump_path + '/', my_path)
+    rsync(remote_dump_path, my_path)
   end
 
   def clone_my

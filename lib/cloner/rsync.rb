@@ -10,8 +10,12 @@ module Cloner::RSync
     "#{rsync_compression} -utvr --checksum -e \"ssh -p #{port}\""
   end
 
-  def rsync(from, to)
-    cmd = "rsync #{rsync_flags} #{e ssh_user}@#{e ssh_host}:#{e from}/ #{e to}/"
+  def rsync(from, to, directory: true)
+    if directory
+      from = "#{from}/" unless from.ends_with?('/')
+      to = "#{to}/" unless to.ends_with?('/')
+    end
+    cmd = "rsync #{rsync_flags} #{e ssh_user}@#{e ssh_host}:#{e from} #{e to}"
     puts "Running RSync: #{cmd}"
     pipe = IO.popen(cmd)
     while (line = pipe.gets)
