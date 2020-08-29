@@ -12,8 +12,8 @@ module Cloner::RSync
 
   def rsync(from, to, directory: true, raise_on_error: false)
     if directory
-      from = "#{from}/" unless from.end_with?('/')
-      to = "#{to}/" unless to.end_with?('/')
+      from = "#{from}/" unless from.to_s.end_with?('/')
+      to = "#{to}/" unless to.to_s.end_with?('/')
     end
     cmd = "rsync #{rsync_flags} #{e ssh_user}@#{e ssh_host}:#{e from} #{e to}"
     puts "Running RSync: #{cmd}"
