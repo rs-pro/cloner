@@ -35,7 +35,7 @@ module Cloner::MySQL
       check_ssh_err(ret)
       host = ar_r_conf['host'].present? ? " --host #{e ar_r_conf['host']}" : ""
       port = ar_r_conf['port'].present? ? " --port #{e ar_r_conf['port']}" : ""
-      dump = "#{my_bin_path 'mysqldump'} #{my_dump_param} --user #{e ar_r_conf['username']} #{my_remote_auth}#{host}#{port} #{e ar_r_conf['database']} > #{e(remote_dump_path + '/cloner.sql')}"
+      dump = "#{my_bin_path 'mysqldump'} #{my_dump_param} --user #{e ar_r_conf['username']} #{my_remote_auth}#{host}#{port} #{e ar_r_conf['database']} > #{e(remote_dump_path + '/'+db_file_name+'.sql')}"
       puts dump if verbose?
       ret = ssh_exec!(ssh, dump)
       check_ssh_err(ret)
@@ -46,7 +46,7 @@ module Cloner::MySQL
     puts "restoring DB"
     host = ar_conf['host'].present? ? " --host #{e ar_conf['host']}" : ""
     port = ar_conf['port'].present? ? " --port #{e ar_conf['port']}" : ""
-    restore = "#{my_bin_path 'mysql'} #{my_restore_param} --user #{e ar_conf['username']} #{my_local_auth}#{host}#{port} #{e ar_to} < #{e(my_path + '/cloner.sql')}"
+    restore = "#{my_bin_path 'mysql'} #{my_restore_param} --user #{e ar_conf['username']} #{my_local_auth}#{host}#{port} #{e ar_to} < #{e(my_path + '/'+db_file_name+'.sql')}"
     puts restore if verbose?
     pipe = IO.popen(restore)
     while (line = pipe.gets)

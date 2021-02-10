@@ -1,8 +1,24 @@
 module Cloner::Ar
-  def ar_conf
+  def read_ar_conf
     @conf ||= begin
       YAML.load_file(Rails.root.join('config', 'database.yml'))[env_database]
     end
+  end
+  def ar_conf
+    if multi_db?
+      read_ar_conf[@current_database]
+    else
+      read_ar_conf
+    end
+  end
+
+  def multi_db?
+    false
+  end
+
+  def clone_databases
+    # clone all databases by default
+    nil
   end
 
   def env_database
@@ -13,7 +29,7 @@ module Cloner::Ar
     ar_conf['database']
   end
 
-  def ar_r_conf
+  def read_ar_r_conf
     @ar_r_conf ||= begin
       do_ssh do |ssh|
         ret = ssh_exec!(ssh, "cat #{e(remote_app_path + '/config/database.yml')}")
@@ -32,7 +48,23 @@ module Cloner::Ar
     end
   end
 
-  def clone_ar
+  def db_file_name
+    if multi_db?
+      "cloner_" + @current_database
+    else
+      "cloner"
+    end
+  end
+
+  def ar_r_conf
+    if multi_db?
+      read_ar_r_conf[@current_database]
+    else
+      read_ar_r_conf
+    end
+  end
+
+  def run_clone_ar
     if ar_conf["adapter"] != ar_r_conf["adapter"]
       puts "Error: ActiveRecord adapter mismatch: local #{ar_conf["adapter"]}, remote #{ar_r_conf["adapter"]}"
       puts "it is not possible to convert from one database to another via this tool."
@@ -48,6 +80,23 @@ module Cloner::Ar
       puts "unknown activerecord adapter: #{ar_conf["adapter"]}"
       puts "currently supported adapters: mysql2, postgresql"
       exit
+    end
+  end
+
+  def clone_ar
+    if multi_db?
+      dblist = clone_databases
+      if dblist.nil?
+        dblist = read_ar_conf.keys
+      end
+      puts "cloning multiple databases: #{dblist.join(", ")}"
+      dblist.each do |dbn|
+        @current_database = dbn
+        run_clone_ar
+      end
+      @current_database = nil
+    else
+      run_clone_ar
     end
   end
 end

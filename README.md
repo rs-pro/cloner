@@ -109,6 +109,24 @@ All functions from cloner/internal.rb can be overriden, for example:
 
 ## Changelog
 
+### 0.10.0
+
+- Support rails 6 multi database activerecord apps via option
+
+```
+def multi_db?
+  true
+end
+def clone_databases
+  ["primary", "gis"]
+  # nil - clone all databases
+end
+```
+
+- Backwards incompatible change:
+
+Changed default dump file name to cloner.bak in postgresql to make it same, and to allow to override it and multiple files.
+
 ### 0.9.0
 
 - Add option to rsync to allow sync one file (thx @AnatolyShirykalov)
