@@ -1,6 +1,8 @@
-require "cloner/version"
+require 'cloner/version'
 require 'thor'
 require 'active_support/concern'
+require 'fileutils'
+
 module Cloner
   autoload :Base, "cloner/base"
   autoload :Internal, "cloner/internal"

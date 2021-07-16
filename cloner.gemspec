@@ -21,6 +21,7 @@ Gem::Specification.new do |spec|
   spec.add_dependency "thor"
   spec.add_dependency "activesupport"
   spec.add_dependency 'net-ssh'
+  spec.add_dependency 'fileutils'
 
   spec.add_development_dependency "bundler"
   spec.add_development_dependency "rake"
