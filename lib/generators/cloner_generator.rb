@@ -19,7 +19,12 @@ class ClonerGenerator < Rails::Generators::Base
 
   def create_extended_task_file
     say 'Create extend file'
-    @username = Rails.application.class.parent_name.downcase
+    module_parent_name = if Rails::VERSION::MAJOR >= 6
+                           Rails.application.class.module_parent_name
+                         else
+                           Rails.application.class.parent_name
+                         end
+    @username = module_parent_name.downcase
     template 'cloner_extend.thor.erb', 'lib/tasks/dl.thor'
   end
 end
