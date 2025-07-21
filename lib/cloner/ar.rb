@@ -1,7 +1,7 @@
 module Cloner::Ar
   def read_ar_conf
     @conf ||= begin
-      YAML.load(ERB.new(File.read(Rails.root.join('config', 'database.yml'))).result)[env_database]
+      YAML.load(ERB.new(File.read(Rails.root.join('config', 'database.yml'))).result, aliases: true)[env_database]
     end
   end
   def ar_conf
@@ -35,7 +35,7 @@ module Cloner::Ar
         ret = ssh_exec!(ssh, "cat #{e(remote_app_path + '/config/database.yml')}")
         check_ssh_err(ret)
         begin
-          res = YAML.load(ERB.new(ret[0]).result)[env_from]
+          res = YAML.load(ERB.new(ret[0]).result, aliases: true)[env_from]
           raise 'no data' if res.blank?
           #res['host'] ||= '127.0.0.1'
         rescue Exception => e
