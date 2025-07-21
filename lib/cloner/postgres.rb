@@ -10,10 +10,10 @@ module Cloner::Postgres
   end
 
   def pg_remote_auth
-    if ar_r_conf['password'].blank?
+    if remote_db_config['password'].blank?
       ""
     else
-      "PGPASSWORD='#{ar_r_conf['password']}' "
+      "PGPASSWORD='#{remote_db_config['password']}' "
     end
   end
 
@@ -60,11 +60,11 @@ module Cloner::Postgres
     if remote_docker_compose? && remote_docker_compose_service
       # Build docker compose exec command for remote
       env_vars = {}
-      env_vars['PGPASSWORD'] = ar_r_conf['password'] if ar_r_conf['password'].present?
+      env_vars['PGPASSWORD'] = remote_db_config['password'] if remote_db_config['password'].present?
       
       compose_cmd = remote_docker_compose_exec(
         remote_docker_compose_service,
-        "env PGPASSWORD='#{ar_r_conf['password']}' #{util}",
+        "env PGPASSWORD='#{remote_db_config['password']}' #{util}",
         env: env_vars,
         no_tty: true
       )
@@ -79,9 +79,9 @@ module Cloner::Postgres
       ssh.exec!("rm -R #{e remote_dump_path}")
       ret = ssh_exec!(ssh, "mkdir -p #{e remote_dump_path}")
       check_ssh_err(ret)
-      host = ar_r_conf['host'].present? ? " -h #{e ar_r_conf['host']}" : ""
-      port = ar_r_conf['port'].present? ? " -p #{e ar_r_conf['port']}" : ""
-      dump = pg_remote_auth + "#{pg_remote_bin_path 'pg_dump'} #{pg_dump_param} -U #{e ar_r_conf['username']}#{host}#{port} #{e ar_r_conf['database']} > #{e(remote_dump_path + '/'+db_file_name+'.bak')}"
+      host = remote_db_config['host'].present? ? " -h #{e remote_db_config['host']}" : ""
+      port = remote_db_config['port'].present? ? " -p #{e remote_db_config['port']}" : ""
+      dump = pg_remote_auth + "#{pg_remote_bin_path 'pg_dump'} #{pg_dump_param} -U #{e remote_db_config['username']}#{host}#{port} #{e remote_db_config['database']} > #{e(remote_dump_path + '/'+db_file_name+'.bak')}"
       puts dump if verbose?
       ret = ssh_exec!(ssh, dump)
       check_ssh_err(ret)

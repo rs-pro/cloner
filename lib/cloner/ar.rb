@@ -65,8 +65,8 @@ module Cloner::Ar
   end
 
   def run_clone_ar
-    if ar_conf["adapter"] != ar_r_conf["adapter"]
-      puts "Error: ActiveRecord adapter mismatch: local #{ar_conf["adapter"]}, remote #{ar_r_conf["adapter"]}"
+    if ar_conf["adapter"] != remote_db_config["adapter"]
+      puts "Error: ActiveRecord adapter mismatch: local #{ar_conf["adapter"]}, remote #{remote_db_config["adapter"]}"
       puts "it is not possible to convert from one database to another via this tool."
       exit
     end

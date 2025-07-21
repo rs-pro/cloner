@@ -84,4 +84,64 @@ module Cloner::DockerCompose
     end
     command
   end
+  
+  # Helper to read and parse remote .env file
+  def remote_env_content
+    @remote_env_content ||= begin
+      content = ""
+      do_ssh do |ssh|
+        env_path = "#{e remote_app_path}/.env"
+        ret = ssh_exec!(ssh, "test -f #{env_path} && cat #{env_path} || echo ''")
+        content = ret[0] if ret[0]
+      end
+      content
+    end
+  end
+  
+  # Parse .env content into a hash
+  def remote_env_vars
+    @remote_env_vars ||= begin
+      vars = {}
+      remote_env_content.each_line do |line|
+        line = line.strip
+        next if line.empty? || line.start_with?('#')
+        
+        # Handle KEY=VALUE format
+        if match = line.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/)
+          key = match[1]
+          value = match[2]
+          
+          # Remove surrounding quotes if present
+          value = value.gsub(/^["']|["']$/, '') if value
+          
+          vars[key] = value
+        end
+      end
+      vars
+    end
+  end
+  
+  # Helper to read a specific env var from remote .env file
+  def read_remote_env(key)
+    remote_env_vars[key]
+  end
+  
+  # Default remote database config for Docker Compose
+  # Override this method to customize your database configuration
+  def remote_db_config
+    if remote_docker_compose?
+      # When using Docker Compose, read from .env file
+      {
+        adapter: 'postgresql',
+        host: read_remote_env('DB_HOST') || 'db',
+        port: read_remote_env('DB_PORT') || '5432',
+        database: read_remote_env('DB_NAME'),
+        username: read_remote_env('DB_USER'),
+        password: read_remote_env('DB_PASSWORD') || ''
+      }.stringify_keys
+    else
+      # Fall back to reading from database.yml
+      ar_r_conf
+    end
+  end
 end

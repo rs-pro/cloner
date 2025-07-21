@@ -10,10 +10,10 @@ module Cloner::MySQL
   end
 
   def my_remote_auth
-    if ar_r_conf['password'].blank?
+    if remote_db_config['password'].blank?
       ""
     else
-      "--password='#{ar_r_conf['password']}'"
+      "--password='#{remote_db_config['password']}'"
     end
   end
 
@@ -64,9 +64,9 @@ module Cloner::MySQL
       ssh.exec!("rm -R #{e remote_dump_path}")
       ret = ssh_exec!(ssh, "mkdir -p #{e remote_dump_path}")
       check_ssh_err(ret)
-      host = ar_r_conf['host'].present? ? " --host #{e ar_r_conf['host']}" : ""
-      port = ar_r_conf['port'].present? ? " --port #{e ar_r_conf['port']}" : ""
-      dump = "#{my_remote_bin_path 'mysqldump'} #{my_dump_param} --user #{e ar_r_conf['username']} #{my_remote_auth}#{host}#{port} #{e ar_r_conf['database']} > #{e(remote_dump_path + '/'+db_file_name+'.sql')}"
+      host = remote_db_config['host'].present? ? " --host #{e remote_db_config['host']}" : ""
+      port = remote_db_config['port'].present? ? " --port #{e remote_db_config['port']}" : ""
+      dump = "#{my_remote_bin_path 'mysqldump'} #{my_dump_param} --user #{e remote_db_config['username']} #{my_remote_auth}#{host}#{port} #{e remote_db_config['database']} > #{e(remote_dump_path + '/'+db_file_name+'.sql')}"
       puts dump if verbose?
       ret = ssh_exec!(ssh, dump)
       check_ssh_err(ret)
