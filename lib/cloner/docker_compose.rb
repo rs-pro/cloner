@@ -92,9 +92,10 @@ module Cloner::DockerCompose
       do_ssh do |ssh|
         env_path = "#{e remote_app_path}/.env"
         ret = ssh_exec!(ssh, "test -f #{env_path} && cat #{env_path} || echo ''")
-        content = ret[0] if ret[0]
+        # ssh_exec! returns [exit_code, output]
+        content = ret[1] if ret && ret[1]
       end
-      content
+      content || ""
     end
   end
   
@@ -124,6 +125,65 @@ module Cloner::DockerCompose
   # Helper to read a specific env var from remote .env file
   def read_remote_env(key)
     remote_env_vars[key]
+  end
+  
+  # Helper to read and parse local .env file
+  def local_env_content
+    @local_env_content ||= begin
+      env_path = Rails.root.join('.env').to_s
+      if File.exist?(env_path)
+        File.read(env_path)
+      else
+        ""
+      end
+    end
+  end
+  
+  # Parse local .env content into a hash
+  def local_env_vars
+    @local_env_vars ||= begin
+      vars = {}
+      local_env_content.each_line do |line|
+        line = line.strip
+        next if line.empty? || line.start_with?('#')
+        
+        # Handle KEY=VALUE format
+        if match = line.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/)
+          key = match[1]
+          value = match[2]
+          
+          # Remove surrounding quotes if present
+          value = value.gsub(/^["']|["']$/, '') if value
+          
+          vars[key] = value
+        end
+      end
+      vars
+    end
+  end
+  
+  # Helper to read a specific env var from local .env file
+  def read_local_env(key)
+    local_env_vars[key]
+  end
+  
+  # Default local database config for Docker Compose
+  # Override this method to customize your database configuration
+  def local_db_config
+    if local_docker_compose?
+      # When using Docker Compose, read from .env file
+      {
+        adapter: 'postgresql',
+        host: read_local_env('DB_HOST') || 'localhost',
+        port: read_local_env('DB_PORT') || '5432',
+        database: read_local_env('DB_NAME'),
+        username: read_local_env('DB_USER'),
+        password: read_local_env('DB_PASSWORD') || ''
+      }.stringify_keys
+    else
+      # Fall back to reading from database.yml
+      ar_conf
+    end
   end
   
   # Default remote database config for Docker Compose

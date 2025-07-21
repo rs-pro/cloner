@@ -2,10 +2,10 @@ module Cloner::MySQL
   extend ActiveSupport::Concern
   
   def my_local_auth
-    if ar_conf['password'].blank?
+    if local_db_config['password'].blank?
       ""
     else
-      "--password='#{ar_conf['password']}'"
+      "--password='#{local_db_config['password']}'"
     end
   end
 
@@ -78,23 +78,23 @@ module Cloner::MySQL
     
     if local_docker_compose? && local_docker_compose_service
       # Docker compose restore - pipe the SQL file to docker compose exec
-      host = ar_conf['host'].present? ? " --host #{e ar_conf['host']}" : ""
-      port = ar_conf['port'].present? ? " --port #{e ar_conf['port']}" : ""
+      host = local_db_config['host'].present? ? " --host #{e local_db_config['host']}" : ""
+      port = local_db_config['port'].present? ? " --port #{e local_db_config['port']}" : ""
       
       compose_path = local_docker_compose_path
       compose_file = local_docker_compose_file
       service = local_docker_compose_service
       
       # MySQL requires password to be passed differently in Docker
-      restore = "cat #{e(my_path + '/'+db_file_name+'.sql')} | (cd #{e compose_path} && docker compose -f #{e compose_file} exec -T #{e service} mysql #{my_restore_param} --user #{e ar_conf['username']} #{my_local_auth}#{host}#{port} #{e ar_to})"
+      restore = "cat #{e(my_path + '/'+db_file_name+'.sql')} | (cd #{e compose_path} && docker compose -f #{e compose_file} exec -T #{e service} mysql #{my_restore_param} --user #{e local_db_config['username']} #{my_local_auth}#{host}#{port} #{e ar_to})"
       puts restore if verbose?
       system(restore)
       ret = $?.to_i
     else
       # Standard restore
-      host = ar_conf['host'].present? ? " --host #{e ar_conf['host']}" : ""
-      port = ar_conf['port'].present? ? " --port #{e ar_conf['port']}" : ""
-      restore = "#{my_local_bin_path 'mysql'} #{my_restore_param} --user #{e ar_conf['username']} #{my_local_auth}#{host}#{port} #{e ar_to} < #{e(my_path + '/'+db_file_name+'.sql')}"
+      host = local_db_config['host'].present? ? " --host #{e local_db_config['host']}" : ""
+      port = local_db_config['port'].present? ? " --port #{e local_db_config['port']}" : ""
+      restore = "#{my_local_bin_path 'mysql'} #{my_restore_param} --user #{e local_db_config['username']} #{my_local_auth}#{host}#{port} #{e ar_to} < #{e(my_path + '/'+db_file_name+'.sql')}"
       puts restore if verbose?
       pipe = IO.popen(restore)
       while (line = pipe.gets)

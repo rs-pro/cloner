@@ -26,7 +26,7 @@ module Cloner::Ar
   end
 
   def ar_to
-    ar_conf['database']
+    local_db_config['database']
   end
 
   def read_ar_r_conf
@@ -65,19 +65,19 @@ module Cloner::Ar
   end
 
   def run_clone_ar
-    if ar_conf["adapter"] != remote_db_config["adapter"]
-      puts "Error: ActiveRecord adapter mismatch: local #{ar_conf["adapter"]}, remote #{remote_db_config["adapter"]}"
+    if local_db_config["adapter"] != remote_db_config["adapter"]
+      puts "Error: ActiveRecord adapter mismatch: local #{local_db_config["adapter"]}, remote #{remote_db_config["adapter"]}"
       puts "it is not possible to convert from one database to another via this tool."
       exit
     end
 
-    case ar_conf["adapter"]
+    case local_db_config["adapter"]
     when 'postgresql'
       clone_pg
     when 'mysql2'
       clone_my
     else
-      puts "unknown activerecord adapter: #{ar_conf["adapter"]}"
+      puts "unknown activerecord adapter: #{local_db_config["adapter"]}"
       puts "currently supported adapters: mysql2, postgresql"
       exit
     end

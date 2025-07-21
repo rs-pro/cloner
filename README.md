@@ -159,6 +159,18 @@ end
 def local_docker_compose_file
   'docker-compose.yml'  # Use if your file is named differently
 end
+
+# Optional: Override local database config (reads from local .env by default)
+def local_db_config
+  {
+    adapter: 'postgresql',
+    host: read_local_env('DB_HOST') || 'localhost',
+    port: read_local_env('DB_PORT') || '5432',
+    database: read_local_env('DB_NAME'),
+    username: read_local_env('DB_USER'),
+    password: read_local_env('DB_PASSWORD')
+  }.stringify_keys
+end
 ```
 
 ### PostgreSQL with Docker Compose Example
@@ -249,7 +261,6 @@ When Docker Compose is enabled:
 Docker Compose support is available for:
 - PostgreSQL
 - MySQL
-- MongoDB
 
 ## Changelog
 
@@ -257,9 +268,12 @@ Docker Compose support is available for:
 
 - Add Docker Compose support for local and remote database operations
 - Add Docker Compose generator template with `-d` option
-- Support automatic command wrapping for PostgreSQL, MySQL, and MongoDB when using Docker Compose
+- Support automatic command wrapping for PostgreSQL and MySQL when using Docker Compose
 - Add helper methods for Docker Compose configuration
 - Default compose file name is now 'compose.yml' (configurable via docker_compose_file methods)
+- Add `local_db_config` and `remote_db_config` methods for customizing database configurations
+- Support reading from .env files for both local and remote environments
+- Replace direct usage of `ar_conf` and `ar_r_conf` with configurable `local_db_config` and `remote_db_config`
 
 ### 0.10.0
 
