@@ -37,10 +37,39 @@ module Cloner::Postgres
   end
 
   def pg_local_bin_path(util)
+    if local_docker_compose? && local_docker_compose_service
+      # For pg_restore, we pipe data in, so we don't wrap it in docker compose
+      return util if util == "pg_restore"
+      
+      # Build docker compose exec command
+      env_vars = {}
+      env_vars['PGPASSWORD'] = ar_conf['password'] if ar_conf['password'].present?
+      
+      compose_cmd = local_docker_compose_exec(
+        local_docker_compose_service, 
+        "env PGPASSWORD='#{ar_conf['password']}' #{util}",
+        env: env_vars,
+        no_tty: true
+      )
+      return compose_cmd
+    end
     pg_bin_path(util)
   end
   
   def pg_remote_bin_path(util)
+    if remote_docker_compose? && remote_docker_compose_service
+      # Build docker compose exec command for remote
+      env_vars = {}
+      env_vars['PGPASSWORD'] = ar_r_conf['password'] if ar_r_conf['password'].present?
+      
+      compose_cmd = remote_docker_compose_exec(
+        remote_docker_compose_service,
+        "env PGPASSWORD='#{ar_r_conf['password']}' #{util}",
+        env: env_vars,
+        no_tty: true
+      )
+      return compose_cmd
+    end
     pg_bin_path(util)
   end 
 
@@ -61,15 +90,34 @@ module Cloner::Postgres
 
   def pg_dump_restore
     puts "restoring DB"
-    host = ar_conf['host'].present? ? " -h #{e ar_conf['host']}" : ""
-    port = ar_conf['port'].present? ? " -p #{e ar_conf['port']}" : ""
-    restore = pg_local_auth + "#{pg_local_bin_path 'pg_restore'} #{pg_restore_param} -U #{e ar_conf['username']}#{host}#{port} -d #{e ar_to} #{e(pg_path + '/'+db_file_name+'.bak')}"
-    puts restore if verbose?
-    pipe = IO.popen(restore)
-    while (line = pipe.gets)
-      print line if verbose?
+    
+    if local_docker_compose? && local_docker_compose_service
+      # Docker compose restore - pipe the backup file to docker compose exec
+      host = ar_conf['host'].present? ? " -h #{e ar_conf['host']}" : ""
+      port = ar_conf['port'].present? ? " -p #{e ar_conf['port']}" : ""
+      
+      env_str = ar_conf['password'].present? ? "--env PGPASSWORD=#{e ar_conf['password']}" : ""
+      compose_path = local_docker_compose_path
+      compose_file = local_docker_compose_file
+      service = local_docker_compose_service
+      
+      restore = "cat #{e(pg_path + '/'+db_file_name+'.bak')} | (cd #{e compose_path} && docker compose -f #{e compose_file} exec -T #{env_str} #{e service} pg_restore #{pg_restore_param} -U #{e ar_conf['username']}#{host}#{port} -d #{e ar_to})"
+      puts restore if verbose?
+      system(restore)
+      ret = $?.to_i
+    else
+      # Standard restore
+      host = ar_conf['host'].present? ? " -h #{e ar_conf['host']}" : ""
+      port = ar_conf['port'].present? ? " -p #{e ar_conf['port']}" : ""
+      restore = pg_local_auth + "#{pg_local_bin_path 'pg_restore'} #{pg_restore_param} -U #{e ar_conf['username']}#{host}#{port} -d #{e ar_to} #{e(pg_path + '/'+db_file_name+'.bak')}"
+      puts restore if verbose?
+      pipe = IO.popen(restore)
+      while (line = pipe.gets)
+        print line if verbose?
+      end
+      ret = $?.to_i
     end
-    ret = $?.to_i
+    
     if ret != 0
       puts "Error: local command exited with #{ret}"
     end

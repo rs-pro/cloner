@@ -107,7 +107,148 @@ All functions from cloner/internal.rb can be overriden, for example:
       {}
     end
 
+## Docker Compose Support
+
+Cloner now supports Docker Compose for both local and remote database operations. This is useful when your databases run inside Docker containers.
+
+### Generating Docker Compose Template
+
+To generate a template with Docker Compose examples:
+
+```
+bundle exec rails generate cloner -d
+```
+
+### Configuration
+
+Add these methods to your `dl.thor` file to enable Docker Compose:
+
+```ruby
+# For remote Docker Compose
+def remote_docker_compose?
+  true
+end
+
+def remote_docker_compose_service
+  'db'  # Your database service name in docker-compose.yml
+end
+
+def remote_docker_compose_path
+  remote_app_path  # Path where docker-compose.yml is located
+end
+
+# For local Docker Compose
+def local_docker_compose?
+  true
+end
+
+def local_docker_compose_service
+  'db'  # Your local database service name
+end
+
+def local_docker_compose_path
+  Rails.root.to_s  # Path where your local docker-compose.yml is located
+end
+```
+
+### PostgreSQL with Docker Compose Example
+
+```ruby
+class Dl < Cloner::Base
+  no_commands do
+    def ssh_host
+      'production.example.com'
+    end
+    
+    def ssh_user
+      'deploy'
+    end
+    
+    def remote_app_path
+      '/home/deploy/myapp'
+    end
+    
+    def remote_dump_path
+      "#{remote_app_path}/tmp_dump"
+    end
+    
+    # Enable Docker Compose for remote
+    def remote_docker_compose?
+      true
+    end
+    
+    def remote_docker_compose_service
+      'postgres'
+    end
+    
+    # Override to read credentials from .env file
+    def read_ar_r_conf
+      # Read from remote .env file
+      env_content = ""
+      do_ssh do |ssh|
+        env_content = ssh.exec!("cat #{e remote_app_path}/.env")
+      end
+      
+      # Parse .env content
+      env_vars = {}
+      env_content.each_line do |line|
+        next if line.strip.empty? || line.strip.start_with?('#')
+        key, value = line.strip.split('=', 2)
+        next unless key && value
+        value = value.gsub(/^["']|["']$/, '')
+        env_vars[key] = value
+      end
+      
+      {
+        adapter: "postgresql",
+        host: env_vars['DB_HOST'] || 'postgres',
+        database: env_vars['DB_NAME'],
+        username: env_vars['DB_USER'],
+        password: env_vars['DB_PASSWORD']
+      }.stringify_keys
+    end
+    
+    # Enable Docker Compose for local
+    def local_docker_compose?
+      true
+    end
+    
+    def local_docker_compose_service
+      'db'
+    end
+  end
+  
+  desc "download", "clone DB from production"
+  def download
+    load_env
+    clone_db
+  end
+end
+```
+
+### How It Works
+
+When Docker Compose is enabled:
+
+1. **Remote operations**: Database dump commands are wrapped with `docker compose exec` on the remote server
+2. **Local operations**: Database restore commands pipe data into `docker compose exec -T` locally
+3. **Automatic command wrapping**: The gem automatically detects and wraps database commands appropriately
+
+### Supported Databases
+
+Docker Compose support is available for:
+- PostgreSQL
+- MySQL
+- MongoDB
+
 ## Changelog
+
+### 0.14.0
+
+- Add Docker Compose support for local and remote database operations
+- Add Docker Compose generator template with `-d` option
+- Support automatic command wrapping for PostgreSQL, MySQL, and MongoDB when using Docker Compose
+- Add helper methods for Docker Compose configuration
 
 ### 0.10.0
 

@@ -1,5 +1,6 @@
 module Cloner::Internal
   extend ActiveSupport::Concern
+  include Cloner::DockerCompose
   include Cloner::MongoDB
   include Cloner::Ar
   include Cloner::Postgres

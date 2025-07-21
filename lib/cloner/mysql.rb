@@ -1,4 +1,6 @@
 module Cloner::MySQL
+  extend ActiveSupport::Concern
+  
   def my_local_auth
     if ar_conf['password'].blank?
       ""
@@ -26,6 +28,35 @@ module Cloner::MySQL
   def my_bin_path(util)
     util
   end
+  
+  def my_local_bin_path(util)
+    if local_docker_compose? && local_docker_compose_service
+      # For mysql restore, we pipe data in, so we don't wrap it
+      return util if util == "mysql"
+      
+      # Build docker compose exec command
+      compose_cmd = local_docker_compose_exec(
+        local_docker_compose_service, 
+        util,
+        no_tty: true
+      )
+      return compose_cmd
+    end
+    my_bin_path(util)
+  end
+  
+  def my_remote_bin_path(util)
+    if remote_docker_compose? && remote_docker_compose_service
+      # Build docker compose exec command for remote
+      compose_cmd = remote_docker_compose_exec(
+        remote_docker_compose_service,
+        util,
+        no_tty: true
+      )
+      return compose_cmd
+    end
+    my_bin_path(util)
+  end
 
   def my_dump_remote
     puts "backup remote DB via ssh"
@@ -35,7 +66,7 @@ module Cloner::MySQL
       check_ssh_err(ret)
       host = ar_r_conf['host'].present? ? " --host #{e ar_r_conf['host']}" : ""
       port = ar_r_conf['port'].present? ? " --port #{e ar_r_conf['port']}" : ""
-      dump = "#{my_bin_path 'mysqldump'} #{my_dump_param} --user #{e ar_r_conf['username']} #{my_remote_auth}#{host}#{port} #{e ar_r_conf['database']} > #{e(remote_dump_path + '/'+db_file_name+'.sql')}"
+      dump = "#{my_remote_bin_path 'mysqldump'} #{my_dump_param} --user #{e ar_r_conf['username']} #{my_remote_auth}#{host}#{port} #{e ar_r_conf['database']} > #{e(remote_dump_path + '/'+db_file_name+'.sql')}"
       puts dump if verbose?
       ret = ssh_exec!(ssh, dump)
       check_ssh_err(ret)
@@ -44,15 +75,34 @@ module Cloner::MySQL
 
   def my_dump_restore
     puts "restoring DB"
-    host = ar_conf['host'].present? ? " --host #{e ar_conf['host']}" : ""
-    port = ar_conf['port'].present? ? " --port #{e ar_conf['port']}" : ""
-    restore = "#{my_bin_path 'mysql'} #{my_restore_param} --user #{e ar_conf['username']} #{my_local_auth}#{host}#{port} #{e ar_to} < #{e(my_path + '/'+db_file_name+'.sql')}"
-    puts restore if verbose?
-    pipe = IO.popen(restore)
-    while (line = pipe.gets)
-      print line if verbose?
+    
+    if local_docker_compose? && local_docker_compose_service
+      # Docker compose restore - pipe the SQL file to docker compose exec
+      host = ar_conf['host'].present? ? " --host #{e ar_conf['host']}" : ""
+      port = ar_conf['port'].present? ? " --port #{e ar_conf['port']}" : ""
+      
+      compose_path = local_docker_compose_path
+      compose_file = local_docker_compose_file
+      service = local_docker_compose_service
+      
+      # MySQL requires password to be passed differently in Docker
+      restore = "cat #{e(my_path + '/'+db_file_name+'.sql')} | (cd #{e compose_path} && docker compose -f #{e compose_file} exec -T #{e service} mysql #{my_restore_param} --user #{e ar_conf['username']} #{my_local_auth}#{host}#{port} #{e ar_to})"
+      puts restore if verbose?
+      system(restore)
+      ret = $?.to_i
+    else
+      # Standard restore
+      host = ar_conf['host'].present? ? " --host #{e ar_conf['host']}" : ""
+      port = ar_conf['port'].present? ? " --port #{e ar_conf['port']}" : ""
+      restore = "#{my_local_bin_path 'mysql'} #{my_restore_param} --user #{e ar_conf['username']} #{my_local_auth}#{host}#{port} #{e ar_to} < #{e(my_path + '/'+db_file_name+'.sql')}"
+      puts restore if verbose?
+      pipe = IO.popen(restore)
+      while (line = pipe.gets)
+        print line if verbose?
+      end
+      ret = $?.to_i
     end
-    ret = $?.to_i
+    
     if ret != 0
       puts "Error: local command exited with #{ret}"
     end

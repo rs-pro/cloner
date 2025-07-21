@@ -6,6 +6,7 @@ require 'fileutils'
 module Cloner
   autoload :Base, "cloner/base"
   autoload :Internal, "cloner/internal"
+  autoload :DockerCompose, "cloner/docker_compose"
   autoload :Ar, "cloner/ar"
   autoload :MongoDB, "cloner/mongodb"
   autoload :Postgres, "cloner/postgres"

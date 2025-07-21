@@ -53,6 +53,36 @@ module Cloner::MongoDB
   def mongodb_dump_extra
     ""
   end
+  
+  def mongodb_bin_path(util)
+    util
+  end
+  
+  def mongodb_local_bin_path(util)
+    if local_docker_compose? && local_docker_compose_service
+      # Build docker compose exec command
+      compose_cmd = local_docker_compose_exec(
+        local_docker_compose_service, 
+        util,
+        no_tty: true
+      )
+      return compose_cmd
+    end
+    mongodb_bin_path(util)
+  end
+  
+  def mongodb_remote_bin_path(util)
+    if remote_docker_compose? && remote_docker_compose_service
+      # Build docker compose exec command for remote
+      compose_cmd = remote_docker_compose_exec(
+        remote_docker_compose_service,
+        util,
+        no_tty: true
+      )
+      return compose_cmd
+    end
+    mongodb_bin_path(util)
+  end
 
   def mongodb_dump_remote
     puts "backup remote DB via ssh"
@@ -65,7 +95,7 @@ module Cloner::MongoDB
       else
         username, password = mongodb_r_conf['username'], mongodb_r_conf['password']
       end
-      dump = "mongodump -u #{e username} -p #{e password} -d #{e mongodb_r_conf['database']} --authenticationDatabase #{e mongodb_r_conf['database']} -o #{e remote_dump_path} #{mongodb_dump_extra}"
+      dump = "#{mongodb_remote_bin_path 'mongodump'} -u #{e username} -p #{e password} -d #{e mongodb_r_conf['database']} --authenticationDatabase #{e mongodb_r_conf['database']} -o #{e remote_dump_path} #{mongodb_dump_extra}"
       puts dump if verbose?
       ret = ssh_exec!(ssh, dump)
       check_ssh_err(ret)
@@ -74,7 +104,7 @@ module Cloner::MongoDB
 
   def mongodb_dump_restore
     puts "restoring DB"
-    restore = "mongorestore --drop -d #{e mongodb_to} #{mongodb_local_auth} #{e mongodb_path}"
+    restore = "#{mongodb_local_bin_path 'mongorestore'} --drop -d #{e mongodb_to} #{mongodb_local_auth} #{e mongodb_path}"
     puts restore if verbose?
     pipe = IO.popen(restore)
     while (line = pipe.gets)

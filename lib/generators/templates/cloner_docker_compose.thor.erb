@@ -1,0 +1,154 @@
+require 'cloner'
+
+class Dl < Cloner::Base
+  no_commands do
+    def rails_path
+      File.expand_path("../../../config/environment", __FILE__)
+    end
+    
+    def stages
+      @_stages ||= {
+        # TODO: Add new stages here if you needed
+        production: {
+          # TODO: Fix production settings
+          ssh_host: 'production.example.com',
+          ssh_user: '<%= @username %>',
+          # Docker Compose settings for remote
+          docker_compose: true,
+          docker_compose_service: 'db',  # service name in docker-compose.yml
+          docker_compose_path: '/data/<%= @username %>/app/current'
+        },
+        staging: {
+          # TODO: Fix staging settings
+          ssh_host: 'staging.example.com',
+          ssh_user: '<%= @username %>',
+          # Docker Compose settings for remote
+          docker_compose: true,
+          docker_compose_service: 'db',
+          docker_compose_path: '/data/<%= @username %>/app/current'
+        }
+      }
+    end
+    
+    def ssh_host
+      stages.dig(options[:from].to_sym, :ssh_host)
+    end
+    
+    def ssh_user
+      stages.dig(options[:from].to_sym, :ssh_user)
+    end
+    
+    def remote_dump_path
+      # TODO: Fix remote dump path
+      '/data/<%= @username %>/dump'
+    end
+    
+    def remote_app_path
+      # TODO: Fix remote app path
+      '/data/<%= @username %>/app/current'
+    end
+    
+    # Docker Compose configuration for remote
+    def remote_docker_compose?
+      stages.dig(options[:from].to_sym, :docker_compose) || false
+    end
+    
+    def remote_docker_compose_service
+      stages.dig(options[:from].to_sym, :docker_compose_service)
+    end
+    
+    def remote_docker_compose_path
+      stages.dig(options[:from].to_sym, :docker_compose_path) || remote_app_path
+    end
+    
+    # Docker Compose configuration for local (if needed)
+    def local_docker_compose?
+      # TODO: Set to true if you use Docker Compose locally
+      false
+    end
+    
+    def local_docker_compose_service
+      # TODO: Set your local Docker Compose service name
+      'db'
+    end
+    
+    def local_docker_compose_path
+      # TODO: Set your local Docker Compose path
+      Rails.root.to_s
+    end
+    
+    # Override for PostgreSQL with Docker Compose (example)
+    # def pg_remote_bin_path(util)
+    #   if remote_docker_compose? && remote_docker_compose_service
+    #     # Example: Read .env file for credentials
+    #     env_vars = read_remote_env_file
+    #     "cd #{e remote_docker_compose_path} && docker compose exec --no-TTY --env PGPASSWORD='#{env_vars['DB_PASSWORD']}' #{e remote_docker_compose_service} #{util}"
+    #   else
+    #     super
+    #   end
+    # end
+    
+    # Helper to read remote .env file (example)
+    # def read_remote_env_file
+    #   env_content = ""
+    #   do_ssh do |ssh|
+    #     env_content = ssh.exec!("cat #{e remote_app_path}/.env")
+    #   end
+    #   
+    #   # Parse .env content
+    #   env_vars = {}
+    #   env_content.each_line do |line|
+    #     next if line.strip.empty? || line.strip.start_with?('#')
+    #     key, value = line.strip.split('=', 2)
+    #     next unless key && value
+    #     # Remove quotes if present
+    #     value = value.gsub(/^["']|["']$/, '')
+    #     env_vars[key] = value
+    #   end
+    #   env_vars
+    # end
+  end
+
+  class_option :from,
+               default: 'production',
+               type: :string,
+               desc: 'stage name where cloner get data'
+  class_option :skip_database,
+               default: false,
+               type: :boolean,
+               aliases: '-D',
+               desc: 'skip clone database'
+  class_option :skip_files,
+               default: false,
+               type: :boolean,
+               aliases: '-F',
+               desc: 'skip clone files'
+
+  desc "download", "clone files and DB from production"
+  def download
+    load_env
+    say "Clone from: #{options[:from]}", :green
+    
+    if remote_docker_compose?
+      say "Using Docker Compose on remote (service: #{remote_docker_compose_service})", :blue
+    end
+    
+    if local_docker_compose?
+      say "Using Docker Compose locally (service: #{local_docker_compose_service})", :blue
+    end
+    
+    if options[:skip_database]
+      say "Skip clone database!", :yellow
+    else
+      clone_db
+    end
+
+    if options[:skip_files]
+      say "Skip clone files!", :yellow
+    else
+      # TODO: Fix folders for synchronization here
+      rsync_public("ckeditor_assets")
+      rsync_public("uploads")
+    end
+  end
+end
