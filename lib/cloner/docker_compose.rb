@@ -15,7 +15,7 @@ module Cloner::DockerCompose
   end
 
   def docker_compose_file
-    "docker-compose.yml"
+    "compose.yml"
   end
 
   def local_docker_compose_file

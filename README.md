@@ -130,11 +130,16 @@ def remote_docker_compose?
 end
 
 def remote_docker_compose_service
-  'db'  # Your database service name in docker-compose.yml
+  'db'  # Your database service name in compose.yml
 end
 
 def remote_docker_compose_path
-  remote_app_path  # Path where docker-compose.yml is located
+  remote_app_path  # Path where compose.yml is located
+end
+
+# Optional: Override compose file name (default is 'compose.yml')
+def remote_docker_compose_file
+  'docker-compose.yml'  # Use if your file is named differently
 end
 
 # For local Docker Compose
@@ -147,7 +152,12 @@ def local_docker_compose_service
 end
 
 def local_docker_compose_path
-  Rails.root.to_s  # Path where your local docker-compose.yml is located
+  Rails.root.to_s  # Path where your local compose.yml is located
+end
+
+# Optional: Override compose file name for local (default is 'compose.yml')
+def local_docker_compose_file
+  'docker-compose.yml'  # Use if your file is named differently
 end
 ```
 
@@ -249,6 +259,7 @@ Docker Compose support is available for:
 - Add Docker Compose generator template with `-d` option
 - Support automatic command wrapping for PostgreSQL, MySQL, and MongoDB when using Docker Compose
 - Add helper methods for Docker Compose configuration
+- Default compose file name is now 'compose.yml' (configurable via docker_compose_file methods)
 
 ### 0.10.0
 

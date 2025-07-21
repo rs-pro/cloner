@@ -15,7 +15,7 @@ class Dl < Cloner::Base
           ssh_user: '<%= @username %>',
           # Docker Compose settings for remote
           docker_compose: true,
-          docker_compose_service: 'db',  # service name in docker-compose.yml
+          docker_compose_service: 'db',  # service name in compose.yml
           docker_compose_path: '/data/<%= @username %>/app/current'
         },
         staging: {
