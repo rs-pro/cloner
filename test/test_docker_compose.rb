@@ -153,7 +153,13 @@ class TestDockerCompose < Cloner::Base
     # Override ssh_exec! to simplify testing
     def ssh_exec!(ssh, cmd)
       puts "MOCK SSH EXEC!: #{cmd}"
-      [0, ""]
+      # Return mock .env content when requested
+      if cmd.include?('.env')
+        env_content = "DB_HOST=rtdb\nDB_PORT=5432\nDB_NAME=rtrack\nDB_USER=rtrack\nDB_PASSWORD=testpass\n"
+        [0, env_content]
+      else
+        [0, ""]
+      end
     end
     
     # Override check_ssh_err for testing

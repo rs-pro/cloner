@@ -90,7 +90,8 @@ module Cloner::DockerCompose
     @remote_env_content ||= begin
       content = ""
       do_ssh do |ssh|
-        env_path = "#{e remote_app_path}/.env"
+        # Use docker compose path, not app path
+        env_path = "#{e remote_docker_compose_path}/.env"
         ret = ssh_exec!(ssh, "test -f #{env_path} && cat #{env_path} || echo ''")
         # ssh_exec! returns [exit_code, output]
         content = ret[1] if ret && ret[1]
@@ -130,7 +131,8 @@ module Cloner::DockerCompose
   # Helper to read and parse local .env file
   def local_env_content
     @local_env_content ||= begin
-      env_path = Rails.root.join('.env').to_s
+      # Use docker compose path for .env file
+      env_path = File.join(local_docker_compose_path, '.env')
       if File.exist?(env_path)
         File.read(env_path)
       else
@@ -172,7 +174,7 @@ module Cloner::DockerCompose
   def local_db_config
     if local_docker_compose?
       # When using Docker Compose, read from .env file
-      {
+      config = {
         adapter: 'postgresql',
         host: read_local_env('DB_HOST') || 'localhost',
         port: read_local_env('DB_PORT') || '5432',
@@ -180,6 +182,23 @@ module Cloner::DockerCompose
         username: read_local_env('DB_USER'),
         password: read_local_env('DB_PASSWORD') || ''
       }.stringify_keys
+      
+      # Validate required fields
+      if config['database'].nil? || config['database'].empty?
+        puts "Error: DB_NAME not found in local .env file at #{local_docker_compose_path}/.env"
+        puts "Available env vars: #{local_env_vars.keys.join(', ')}"
+        puts "Local .env content (first 10 lines):"
+        puts local_env_content.lines.first(10).join
+        exit 1
+      end
+      
+      if config['username'].nil? || config['username'].empty?
+        puts "Error: DB_USER not found in local .env file at #{local_docker_compose_path}/.env"
+        puts "Available env vars: #{local_env_vars.keys.join(', ')}"
+        exit 1
+      end
+      
+      config
     else
       # Fall back to reading from database.yml
       ar_conf
@@ -191,7 +210,7 @@ module Cloner::DockerCompose
   def remote_db_config
     if remote_docker_compose?
       # When using Docker Compose, read from .env file
-      {
+      config = {
         adapter: 'postgresql',
         host: read_remote_env('DB_HOST') || 'db',
         port: read_remote_env('DB_PORT') || '5432',
@@ -199,6 +218,23 @@ module Cloner::DockerCompose
         username: read_remote_env('DB_USER'),
         password: read_remote_env('DB_PASSWORD') || ''
       }.stringify_keys
+      
+      # Validate required fields
+      if config['database'].nil? || config['database'].empty?
+        puts "Error: DB_NAME not found in remote .env file at #{remote_docker_compose_path}/.env"
+        puts "Available env vars: #{remote_env_vars.keys.join(', ')}"
+        puts "Remote .env content (first 10 lines):"
+        puts remote_env_content.lines.first(10).join
+        exit 1
+      end
+      
+      if config['username'].nil? || config['username'].empty?
+        puts "Error: DB_USER not found in remote .env file at #{remote_docker_compose_path}/.env"
+        puts "Available env vars: #{remote_env_vars.keys.join(', ')}"
+        exit 1
+      end
+      
+      config
     else
       # Fall back to reading from database.yml
       ar_r_conf
