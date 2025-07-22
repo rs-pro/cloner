@@ -194,10 +194,12 @@ class TestDockerCompose < Cloner::Base
     puts "\nRemote pg_dump command:"
     puts pg_remote_bin_path('pg_dump')
     
-    puts "\n=== Testing Docker Compose exec commands ==="
-    test_cmd = "echo 'test'"
-    puts "Local exec: #{local_docker_compose_exec(local_docker_compose_service, test_cmd)}"
-    puts "Remote exec: #{remote_docker_compose_exec(remote_docker_compose_service, test_cmd)}"
+    puts "\n=== Testing env var reading ==="
+    puts "Remote DB Config:"
+    puts remote_db_config.inspect
+    
+    puts "\nLocal DB Config:"
+    puts local_db_config.inspect
     
     puts "\n=== Simulating database clone ==="
     clone_db

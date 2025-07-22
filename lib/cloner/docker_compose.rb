@@ -1,3 +1,5 @@
+require 'active_support/core_ext/hash'
+
 module Cloner::DockerCompose
   extend ActiveSupport::Concern
 
@@ -91,10 +93,29 @@ module Cloner::DockerCompose
       content = ""
       do_ssh do |ssh|
         # Use docker compose path, not app path
-        env_path = "#{e remote_docker_compose_path}/.env"
-        ret = ssh_exec!(ssh, "test -f #{env_path} && cat #{env_path} || echo ''")
-        # ssh_exec! returns [exit_code, output]
-        content = ret[1] if ret && ret[1]
+        env_path = "#{remote_docker_compose_path}/.env"
+        # First check if file exists
+        check_cmd = "test -f #{e env_path} && echo 'EXISTS' || echo 'NOT_EXISTS'"
+        check_ret = ssh_exec!(ssh, check_cmd)
+        
+        if check_ret && check_ret[0] && check_ret[0].strip == 'NOT_EXISTS'
+          puts "ERROR: .env file not found at #{env_path}"
+          puts "Try running: ssh #{ssh_user}@#{ssh_host} 'ls -la #{remote_docker_compose_path}/'"
+          exit 1
+        end
+        
+        # Then read the file
+        read_cmd = "cat #{e env_path} 2>&1"
+        ret = ssh_exec!(ssh, read_cmd)
+        
+        # ssh_exec! returns [stdout, stderr, exit_code, ...]
+        content = ret[0] if ret && ret[0]
+        
+        if content.to_s.strip == 'FILE NOT FOUND'
+          puts "ERROR: .env file not found at #{env_path}"
+          puts "Try running: ssh #{ssh_user}@#{ssh_host} 'ls -la #{remote_docker_compose_path}/'"
+          exit 1
+        end
       end
       content || ""
     end
@@ -104,7 +125,9 @@ module Cloner::DockerCompose
   def remote_env_vars
     @remote_env_vars ||= begin
       vars = {}
-      remote_env_content.each_line do |line|
+      content = remote_env_content
+      content.each_line.with_index do |line, idx|
+        original_line = line
         line = line.strip
         next if line.empty? || line.start_with?('#')
         
@@ -117,6 +140,7 @@ module Cloner::DockerCompose
           value = value.gsub(/^["']|["']$/, '') if value
           
           vars[key] = value
+        else
         end
       end
       vars
@@ -124,8 +148,15 @@ module Cloner::DockerCompose
   end
   
   # Helper to read a specific env var from remote .env file
-  def read_remote_env(key)
-    remote_env_vars[key]
+  def read_remote_env(key = nil)
+    if key.nil?
+      # Return all env vars
+      remote_env_vars
+    else
+      # Return specific key
+      value = remote_env_vars[key]
+      value
+    end
   end
   
   # Helper to read and parse local .env file
@@ -134,7 +165,8 @@ module Cloner::DockerCompose
       # Use docker compose path for .env file
       env_path = File.join(local_docker_compose_path, '.env')
       if File.exist?(env_path)
-        File.read(env_path)
+        content = File.read(env_path)
+        content
       else
         ""
       end
@@ -165,8 +197,15 @@ module Cloner::DockerCompose
   end
   
   # Helper to read a specific env var from local .env file
-  def read_local_env(key)
-    local_env_vars[key]
+  def read_local_env(key = nil)
+    if key.nil?
+      # Return all env vars
+      local_env_vars
+    else
+      # Return specific key
+      value = local_env_vars[key]
+      value
+    end
   end
   
   # Default local database config for Docker Compose
@@ -218,6 +257,7 @@ module Cloner::DockerCompose
         username: read_remote_env('DB_USER'),
         password: read_remote_env('DB_PASSWORD') || ''
       }.stringify_keys
+      
       
       # Validate required fields
       if config['database'].nil? || config['database'].empty?
