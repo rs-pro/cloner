@@ -19,6 +19,26 @@ module Cloner::Internal
     require 'net/ssh'
   end
 
+  # Returns the project root directory path.
+  # Override this method when not using Rails.
+  def project_root
+    if defined?(Rails)
+      Rails.root
+    else
+      raise NotImplementedError, "project_root must be defined when not using Rails"
+    end
+  end
+
+  # Returns the current environment name.
+  # Override this method when not using Rails.
+  def project_env
+    if defined?(Rails)
+      Rails.env
+    else
+      raise NotImplementedError, "project_env must be defined when not using Rails"
+    end
+  end
+
   def verbose?
     false
   end

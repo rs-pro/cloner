@@ -124,7 +124,7 @@ module Cloner::Postgres
   end
 
   def pg_path
-    Rails.root.join("tmp", "dump").to_s
+    File.join(project_root.to_s, "tmp", "dump")
   end
 
   def pg_dump_copy

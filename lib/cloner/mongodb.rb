@@ -3,7 +3,7 @@ module Cloner::MongoDB
 
   def mongodb_conf
     @conf ||= begin
-      yml = YAML.load_file(Rails.root.join('config', 'mongoid.yml'))[Rails.env]
+      yml = YAML.load_file(File.join(project_root.to_s, 'config', 'mongoid.yml'))[project_env]
       if yml.key?('sessions')
         yml['sessions']['default']
       else
@@ -117,7 +117,7 @@ module Cloner::MongoDB
   end
 
   def mongodb_path
-    Rails.root.join("tmp", "dump", mongodb_to).to_s
+    File.join(project_root.to_s, "tmp", "dump", mongodb_to)
   end
 
   def mongodb_dump_copy

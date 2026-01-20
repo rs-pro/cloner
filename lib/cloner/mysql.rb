@@ -109,7 +109,7 @@ module Cloner::MySQL
   end
 
   def my_path
-    Rails.root.join("tmp", "dump").to_s
+    File.join(project_root.to_s, "tmp", "dump")
   end
 
   def my_dump_copy

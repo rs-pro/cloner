@@ -1,17 +1,9 @@
 #!/usr/bin/env ruby
 
-require 'pathname'
-require_relative '../lib/cloner'
+$LOAD_PATH.unshift File.expand_path('../lib', __dir__)
 
-# Mock Rails for testing
-class ::Rails
-  def self.root
-    Pathname.new(File.expand_path("../", __FILE__))
-  end
-  def self.env
-    "development"
-  end
-end
+require 'pathname'
+require 'cloner'
 
 class TestDockerCompose < Cloner::Base
   no_commands do
@@ -23,6 +15,15 @@ class TestDockerCompose < Cloner::Base
       require 'net/ssh'
       require 'shellwords'
       require 'active_support/core_ext/object'
+    end
+
+    # Override project_root and project_env for non-Rails usage
+    def project_root
+      Pathname.new(File.expand_path("../", __FILE__))
+    end
+
+    def project_env
+      "development"
     end
 
     # Test with mock SSH - no actual connection
@@ -60,7 +61,7 @@ class TestDockerCompose < Cloner::Base
     end
 
     def local_docker_compose_path
-      Rails.root.parent.to_s
+      project_root.parent.to_s
     end
 
     def remote_app_path

@@ -1,7 +1,7 @@
 module Cloner::Ar
   def read_ar_conf
     @conf ||= begin
-      YAML.load(ERB.new(File.read(Rails.root.join('config', 'database.yml'))).result, aliases: true)[env_database]
+      YAML.load(ERB.new(File.read(File.join(project_root.to_s, 'config', 'database.yml'))).result, aliases: true)[env_database]
     end
   end
   def ar_conf
@@ -22,7 +22,7 @@ module Cloner::Ar
   end
 
   def env_database
-    Rails.env
+    project_env
   end
 
   def ar_to

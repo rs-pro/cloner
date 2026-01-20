@@ -32,6 +32,6 @@ module Cloner::RSync
   end
 
   def rsync_public(folder)
-    rsync("#{remote_app_path}/public/#{folder}", Rails.root.join("public/#{folder}"))
+    rsync("#{remote_app_path}/public/#{folder}", File.join(project_root.to_s, "public", folder))
   end
 end
