@@ -6,6 +6,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Cloner is a Ruby gem that simplifies cloning production databases and files to local development or staging environments. It supports MongoDB (via Mongoid), PostgreSQL, and MySQL databases, and uses rsync for file synchronization.
 
+A Rust rewrite lives in [`rust/`](rust/README.md). It is a single binary with a
+JavaScript DSL (`dl.js`), SSH/SFTP file sync, Compose/`.env` resolution, backup
+mode, and `pg_dev`-style `cloner db create/reset/drop/migrate/seed` commands.
+Build and test it with:
+
+```bash
+cd rust
+cargo build --release
+cargo test
+cargo clippy --all-targets -- -D warnings
+```
+
+Rust user docs: `rust/docs/guides/dsl.md`, `cli.md`, `operations.md`,
+`migration-from-thor.md`.
+
 ## Key Commands
 
 ```bash

@@ -1,0 +1,38 @@
+[package]
+name = "cloner"
+version = "1.0.0"
+edition = "2024"
+rust-version = "1.89"
+license = "MIT"
+description = "Declarative database and file cloning over SSH, with a JavaScript DSL"
+repository = "https://github.com/rs-pro/cloner"
+
+[[bin]]
+name = "cloner"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive"] }
+env_logger = "0.11"
+globset = "0.4"
+hex = "0.4"
+log = "0.4"
+rquickjs = { version = "0.14", features = ["full"] }
+russh = { version = "0.65", default-features = false, features = ["ring", "rsa", "flate2"] }
+russh-sftp = "3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+sha2 = "0.10"
+shell-words = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "fs", "time", "sync", "process"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

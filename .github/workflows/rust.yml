@@ -1,0 +1,94 @@
+name: Rust
+
+on:
+  push:
+    branches: ["rust", "master"]
+    paths:
+      - "rust/**"
+      - ".github/workflows/rust.yml"
+  pull_request:
+    paths:
+      - "rust/**"
+      - ".github/workflows/rust.yml"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+concurrency:
+  group: rust-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Clippy (warnings are errors)
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Unit tests
+        run: cargo test --bins --locked
+      - name: Integration tests (CLI)
+        run: cargo test --tests --locked
+      - name: Full test suite
+        run: cargo test --all-targets --locked
+
+  msrv:
+    name: MSRV 1.89
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.89.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          key: msrv
+      - name: Check MSRV build
+        run: cargo check --all-targets --locked
+
+  build:
+    name: Release build
+    runs-on: ubuntu-latest
+    needs: test
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Build
+        run: cargo build --release --locked
+      - name: Smoke test binary
+        run: |
+          ./target/release/cloner --version
+          ./target/release/cloner --help
+          ./target/release/cloner init --config /tmp/dl.js
+          ./target/release/cloner db create app --dry-run
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cloner-x86_64-linux
+          path: rust/target/release/cloner
+          if-no-files-found: error
