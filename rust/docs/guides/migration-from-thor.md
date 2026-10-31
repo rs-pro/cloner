@@ -1,5 +1,10 @@
 # Migrating from `dl.thor`
 
+> This is the short overview. For the complete conversion procedure, including
+> stages, helper methods, real-world examples and a checklist, see
+> [Converting a legacy `dl.thor` to `dl.js`](thor-to-js-conversion.md).
+> For command-line changes see [CLI usage after `thor dl`](cli-usage.md).
+
 The old `dl.thor` files subclassed `Cloner::Base` and overrode Ruby methods.
 The Rust version uses a JavaScript object. Most overrides become plain config
 keys; custom Ruby methods become hooks or an `execute()` action.

@@ -381,7 +381,10 @@ module.exports = defineConfig({
 
 ## See also
 
+- [Installation](installer.md)
 - [CLI reference](cli.md)
+- [CLI usage for `thor dl` users](cli-usage.md)
 - [Operations and troubleshooting](operations.md)
+- [Converting `dl.thor` to `dl.js`](thor-to-js-conversion.md)
 - [Migrating from dl.thor](migration-from-thor.md)
 - [Dependencies and design](dependencies-and-design.md)

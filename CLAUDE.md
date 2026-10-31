@@ -18,8 +18,10 @@ cargo test
 cargo clippy --all-targets -- -D warnings
 ```
 
-Rust user docs: `rust/docs/guides/dsl.md`, `cli.md`, `operations.md`,
-`migration-from-thor.md`.
+Rust user docs: `rust/docs/guides/installer.md`, `dsl.md`, `cli.md`,
+`cli-usage.md`, `operations.md`, `thor-to-js-conversion.md`,
+`migration-from-thor.md`. The `migrate-dl-thor-to-dl-js` skill lives at
+`.opencode/skills/migrate-dl-thor-to-dl-js/SKILL.md`.
 
 ## Key Commands
 

@@ -21,20 +21,28 @@ standalone backup and database-reset tool.
 ## Quick start
 
 ```bash
-cd rust
-cargo build --release
+# install to ~/.local/bin (installs build deps + Rust if needed)
+./rust/install.sh
 
 # create a starter config
-./target/release/cloner init
+cloner init
 
 # inspect the resolved config (passwords redacted)
-./target/release/cloner validate
+cloner validate
 
 # clone database + files
-./target/release/cloner run
+cloner run
 
 # non-destructive backup
-./target/release/cloner backup --to /var/backups/myapp
+cloner backup --to /var/backups/myapp
+```
+
+Or build manually:
+
+```bash
+cd rust
+cargo build --release
+./target/release/cloner --help
 ```
 
 Example `dl.js`:
@@ -101,12 +109,18 @@ and builds a release binary.
 
 ## Documentation
 
+- [Installation](docs/guides/installer.md) — installer script, manual build,
+  PATH and troubleshooting
 - [DSL reference](docs/guides/dsl.md) — every config key, hook and global
 - [CLI reference](docs/guides/cli.md) — commands, flags, database admin
+- [CLI usage for `thor dl` users](docs/guides/cli-usage.md) — old command →
+  new command mapping
+- [Converting `dl.thor` to `dl.js`](docs/guides/thor-to-js-conversion.md) —
+  complete conversion guide
 - [Operations and troubleshooting](docs/guides/operations.md) — SSH, Compose
   resolution, backup, security, tests
-- [Migrating from dl.thor](docs/guides/migration-from-thor.md) — method mapping
-  and transition plan
+- [Migrating from dl.thor](docs/guides/migration-from-thor.md) — short method
+  mapping and transition plan
 - [Dependencies and design](docs/guides/dependencies-and-design.md) — crate
   choices, licensing and rejected alternatives
 
