@@ -18,6 +18,10 @@ cargo test
 cargo clippy --all-targets -- -D warnings
 ```
 
+On Windows use `rust\install.ps1` (installs Build Tools/Rust if needed and
+copies `cloner.exe` to `%USERPROFILE%\.local\bin`); the same cargo commands
+apply and the binary is `target\release\cloner.exe`.
+
 Rust user docs: `rust/docs/guides/installer.md`, `dsl.md`, `cli.md`,
 `cli-usage.md`, `operations.md`, `thor-to-js-conversion.md`,
 `migration-from-thor.md`. The `migrate-dl-thor-to-dl-js` skill lives at

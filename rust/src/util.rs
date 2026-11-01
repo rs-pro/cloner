@@ -25,13 +25,116 @@ pub fn remote_join(base: &str, child: &str) -> String {
     )
 }
 
+/// Home directory used for `~` expansion and default SSH files. Windows
+/// logins set `USERPROFILE` rather than `HOME`.
+pub fn home_dir() -> Option<PathBuf> {
+    if let Some(home) = std::env::var_os("HOME").filter(|value| !value.is_empty()) {
+        return Some(PathBuf::from(home));
+    }
+    #[cfg(windows)]
+    if let Some(profile) = std::env::var_os("USERPROFILE").filter(|value| !value.is_empty()) {
+        return Some(PathBuf::from(profile));
+    }
+    None
+}
+
+/// Strips the Windows verbatim prefix (`\\?\` or `\\?\UNC\`) that
+/// `canonicalize` adds, so paths stay readable and comparable.
+pub fn clean_path(path: PathBuf) -> PathBuf {
+    let text = path.to_string_lossy();
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{rest}"));
+    }
+    if let Some(rest) = text.strip_prefix(r"\\?\") {
+        return PathBuf::from(rest);
+    }
+    path
+}
+
 pub fn expand_tilde(value: &str) -> PathBuf {
     if let Some(rest) = value.strip_prefix("~/")
-        && let Some(home) = std::env::var_os("HOME")
+        && let Some(home) = home_dir()
     {
-        return PathBuf::from(home).join(rest);
+        return home.join(rest);
     }
     PathBuf::from(value)
+}
+
+/// The shell used to run local commands. Commands are always built with POSIX
+/// quoting (`shq`), so a POSIX shell is required on every platform.
+pub struct LocalShell {
+    pub program: PathBuf,
+}
+
+pub fn local_shell() -> Result<LocalShell> {
+    let program = std::env::var_os("CLONER_SHELL")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(default_shell)
+        .ok_or_else(|| {
+            anyhow!(
+                "no POSIX shell found for local commands; install Git for Windows \
+                 (https://git-scm.com/downloads), which provides sh.exe, or set CLONER_SHELL"
+            )
+        })?;
+    Ok(LocalShell { program })
+}
+
+#[cfg(not(windows))]
+fn default_shell() -> Option<PathBuf> {
+    find_in_path("sh").or_else(|| first_existing(&[PathBuf::from("/bin/sh")]))
+}
+
+#[cfg(windows)]
+fn default_shell() -> Option<PathBuf> {
+    for name in ["sh", "bash"] {
+        if let Some(found) = find_in_path(name) {
+            return Some(found);
+        }
+    }
+    // Git for Windows ships sh.exe next to the git the user already has.
+    let mut candidates = Vec::new();
+    for env_name in ["ProgramFiles", "ProgramFiles(x86)"] {
+        if let Some(base) = std::env::var_os(env_name) {
+            let base = PathBuf::from(base);
+            candidates.push(base.join(r"Git\bin\sh.exe"));
+            candidates.push(base.join(r"Git\usr\bin\sh.exe"));
+        }
+    }
+    if let Some(base) = std::env::var_os("LOCALAPPDATA") {
+        candidates.push(PathBuf::from(base).join(r"Programs\Git\bin\sh.exe"));
+    }
+    first_existing(&candidates)
+}
+
+/// First path that exists as a file.
+fn first_existing(candidates: &[PathBuf]) -> Option<PathBuf> {
+    candidates.iter().find(|path| path.is_file()).cloned()
+}
+
+fn find_in_path(name: &str) -> Option<PathBuf> {
+    let entries = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&entries) {
+        if dir.as_os_str().is_empty() {
+            continue;
+        }
+        #[cfg(windows)]
+        if dir
+            .file_name()
+            .is_some_and(|part| part.eq_ignore_ascii_case("WindowsApps"))
+        {
+            // App Execution Aliases (e.g. the WSL `bash` stub) are reparse
+            // points, not usable shells.
+            continue;
+        }
+        let mut candidates = vec![dir.join(name)];
+        #[cfg(windows)]
+        candidates.push(dir.join(format!("{name}.exe")));
+        if let Some(found) = first_existing(&candidates) {
+            return Some(found);
+        }
+    }
+    None
 }
 
 pub fn resolve_path(base: &Path, value: &str) -> PathBuf {
@@ -318,13 +421,56 @@ mod tests {
 
     #[test]
     fn expands_tilde_using_home() {
-        let home = std::env::var_os("HOME").map(PathBuf::from);
+        let home = home_dir();
         let expanded = expand_tilde("~/.ssh/id_ed25519");
         match home {
             Some(home) => assert_eq!(expanded, home.join(".ssh/id_ed25519")),
             None => assert_eq!(expanded, PathBuf::from("~/.ssh/id_ed25519")),
         }
         assert_eq!(expand_tilde("~user/file"), PathBuf::from("~user/file"));
+    }
+
+    #[test]
+    fn strips_windows_verbatim_prefixes() {
+        assert_eq!(
+            clean_path(PathBuf::from(r"\\?\C:\srv\app\dl.js")),
+            PathBuf::from(r"C:\srv\app\dl.js")
+        );
+        assert_eq!(
+            clean_path(PathBuf::from(r"\\?\UNC\server\share\dl.js")),
+            PathBuf::from(r"\\server\share\dl.js")
+        );
+        assert_eq!(
+            clean_path(PathBuf::from(r"C:\srv\app\dl.js")),
+            PathBuf::from(r"C:\srv\app\dl.js")
+        );
+        assert_eq!(
+            clean_path(PathBuf::from("/srv/app/dl.js")),
+            PathBuf::from("/srv/app/dl.js")
+        );
+    }
+
+    #[test]
+    fn picks_the_first_existing_shell_candidate() {
+        let dir = tempfile::tempdir().unwrap();
+        let shell = dir.path().join("sh.exe");
+        std::fs::write(&shell, b"").unwrap();
+        let missing = dir.path().join("bash.exe");
+        assert_eq!(
+            first_existing(&[missing.clone(), shell.clone()]),
+            Some(shell.clone())
+        );
+        assert_eq!(first_existing(&[missing]), None);
+    }
+
+    #[test]
+    fn resolves_a_local_shell() {
+        let shell = local_shell().expect("a POSIX shell is available");
+        assert!(
+            shell.program == Path::new("sh") || shell.program.is_file(),
+            "unexpected shell {}",
+            shell.program.display()
+        );
     }
 
     #[test]

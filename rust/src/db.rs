@@ -574,7 +574,8 @@ pub fn run_local_capture(
     envs: &[(String, String)],
     stdin_path: Option<&Path>,
 ) -> Result<LocalCmdOutput> {
-    let mut process = Command::new("sh");
+    let shell = crate::util::local_shell()?;
+    let mut process = Command::new(&shell.program);
     process.arg("-c").arg(command);
     if let Some(cwd) = cwd {
         process.current_dir(cwd);

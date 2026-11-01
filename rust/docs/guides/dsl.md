@@ -355,7 +355,9 @@ sleep(500);
 sync("public/uploads", "public/uploads");
 ```
 
-`__dirname` and `__filename` are available like in Node.js.
+`__dirname` and `__filename` are available like in Node.js. `dirname` and
+`basename` accept both `/` and `\` separators, so they work with Windows paths
+as well as remote POSIX paths.
 
 ## `defineConfig`
 
@@ -376,6 +378,7 @@ module.exports = defineConfig({
 | `SSH_AUTH_SOCK` | SSH agent socket |
 | `SSH_KEY_PASSPHRASE` | Passphrase for an encrypted identity file |
 | `CLONER_SSH_KEY_PASSPHRASE` | Alternative passphrase variable |
+| `CLONER_SHELL` | POSIX shell used for local commands (Windows default: Git for Windows `sh.exe`) |
 | `PGHOST` / `PGPORT` / `PGUSER` / `PGPASSWORD` | Defaults for `cloner db` commands |
 | `RAILS_ENV` | Default environment for `cloner db` commands |
 

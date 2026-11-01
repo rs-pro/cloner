@@ -57,9 +57,11 @@ pub struct LocalContext {
 pub fn eval_config(config_path: &Path) -> Result<Config> {
     let source = std::fs::read_to_string(config_path)
         .with_context(|| format!("read {}", config_path.display()))?;
-    let canonical = config_path
-        .canonicalize()
-        .unwrap_or_else(|_| config_path.to_path_buf());
+    let canonical = crate::util::clean_path(
+        config_path
+            .canonicalize()
+            .unwrap_or_else(|_| config_path.to_path_buf()),
+    );
     let js_runtime = Runtime::new().context("create QuickJS runtime")?;
     let ctx = JsContext::full(&js_runtime).context("create QuickJS context")?;
     ctx.with(|ctx| -> Result<Config> {
@@ -163,8 +165,17 @@ impl RuntimeState {
 
 const PRELUDE: &str = r#"
 globalThis.defineConfig = (value) => value;
-globalThis.dirname = (p) => p.replace(/\/[^/]*$/, '') || '/';
-globalThis.basename = (p) => p.replace(/\/+$/, '').split('/').pop();
+globalThis.dirname = (p) => {
+  const s = String(p).replace(/[\\/]+$/, '');
+  if (!s) return '/';
+  const i = s.search(/[\\/][^\\/]*$/);
+  if (i < 0) return '.';
+  return s.slice(0, i).replace(/[\\/]+$/, '') || '/';
+};
+globalThis.basename = (p) => {
+  const parts = String(p).replace(/[\\/]+$/, '').split(/[\\/]/);
+  return parts[parts.length - 1];
+};
 globalThis.console = {
   log: (...args) => __cloner_log(args.map(fmt).join(' ')),
   info: (...args) => __cloner_log(args.map(fmt).join(' ')),
@@ -180,9 +191,11 @@ function fmt(value) {
 pub fn execute(config_path: &Path, options: RunOptions) -> Result<()> {
     let source = std::fs::read_to_string(config_path)
         .with_context(|| format!("read {}", config_path.display()))?;
-    let canonical = config_path
-        .canonicalize()
-        .unwrap_or_else(|_| config_path.to_path_buf());
+    let canonical = crate::util::clean_path(
+        config_path
+            .canonicalize()
+            .unwrap_or_else(|_| config_path.to_path_buf()),
+    );
 
     let tokio_runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -1188,7 +1201,7 @@ mod tests {
             "#,
         );
         let config = eval_config(&path).unwrap();
-        let root = dir.path().canonicalize().unwrap();
+        let root = crate::util::clean_path(dir.path().canonicalize().unwrap());
         assert_eq!(config.local.root.as_deref(), Some(root.to_str().unwrap()));
         assert_eq!(config.local.env, "test");
         let remote = config.remote.unwrap();
@@ -1235,9 +1248,27 @@ mod tests {
             "#,
         );
         let config = eval_config(&path).unwrap();
-        let root = dir.path().canonicalize().unwrap();
+        let root = crate::util::clean_path(dir.path().canonicalize().unwrap());
         assert_eq!(config.local.root.as_deref(), Some(root.to_str().unwrap()));
         assert_eq!(config.remote.unwrap().app_path, "app");
+    }
+
+    #[test]
+    fn dirname_and_basename_accept_windows_separators() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = config_file(
+            &dir,
+            "dl.js",
+            r#"
+            module.exports = {
+              local: { root: dirname("C:\\srv\\app\\dl.js") },
+              remote: { host: "example.com", appPath: basename("C:\\srv\\app\\dumps\\") },
+            };
+            "#,
+        );
+        let config = eval_config(&path).unwrap();
+        assert_eq!(config.local.root.as_deref(), Some(r"C:\srv\app"));
+        assert_eq!(config.remote.unwrap().app_path, "dumps");
     }
 
     #[test]

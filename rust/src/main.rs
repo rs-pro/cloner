@@ -675,7 +675,7 @@ mod tests {
         let path = dir.path().join("dl.js");
         std::fs::write(&path, TEMPLATE).unwrap();
         let config = dsl::eval_config(&path).unwrap();
-        let root = dir.path().canonicalize().unwrap();
+        let root = crate::util::clean_path(dir.path().canonicalize().unwrap());
         assert_eq!(config.local.root.as_deref(), Some(root.to_str().unwrap()));
         assert_eq!(config.remote.unwrap().host, "example.com");
         assert_eq!(config.files.len(), 0);

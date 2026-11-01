@@ -287,14 +287,39 @@ async fn download_symlink(
             return Ok(());
         }
         tokio::fs::remove_file(local).await.ok();
-    } else if local.exists() {
+    } else if local.is_file() {
+        #[cfg(unix)]
         tokio::fs::remove_file(local).await.ok();
+        #[cfg(not(unix))]
+        {
+            // Replacing a regular file with a symlink needs privileges on
+            // Windows; keep the file and report the skip.
+            log::warn!(
+                "keeping local file {} (cannot replace it with a symlink)",
+                local.display()
+            );
+            stats.skipped += 1;
+            return Ok(());
+        }
     }
     #[cfg(unix)]
-    tokio::fs::symlink(&target, local)
-        .await
-        .with_context(|| format!("create symlink {} -> {}", local.display(), target))?;
-    stats.downloaded += 1;
+    let created = tokio::fs::symlink(&target, local).await;
+    #[cfg(windows)]
+    let created = std::os::windows::fs::symlink_file(&target, local)
+        .or_else(|_| std::os::windows::fs::symlink_dir(&target, local))
+        .map_err(|error| anyhow!(error));
+    match created {
+        Ok(()) => stats.downloaded += 1,
+        Err(error) => {
+            // Windows only allows unprivileged symlinks in Developer Mode.
+            log::warn!(
+                "cannot create symlink {} -> {}: {error}",
+                local.display(),
+                target
+            );
+            stats.skipped += 1;
+        }
+    }
     Ok(())
 }
 
@@ -354,6 +379,12 @@ fn apply_permissions(path: &Path, meta: &Metadata) {
             mode |= 0o001;
         }
         let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode));
+    }
+    #[cfg(not(unix))]
+    {
+        // Windows has no POSIX mode bits; new files inherit the ACLs of the
+        // parent directory.
+        let _ = (path, meta);
     }
 }
 

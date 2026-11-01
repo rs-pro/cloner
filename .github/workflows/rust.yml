@@ -27,7 +27,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     defaults:
       run:
         working-directory: rust
@@ -91,4 +91,31 @@ jobs:
         with:
           name: cloner-x86_64-linux
           path: rust/target/release/cloner
+          if-no-files-found: error
+
+  build-windows:
+    name: Release build (Windows)
+    runs-on: windows-latest
+    needs: test
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Build
+        run: cargo build --release --locked
+      - name: Smoke test binary
+        run: |
+          ./target/release/cloner.exe --version
+          ./target/release/cloner.exe --help
+          ./target/release/cloner.exe init --config "$env:TEMP/dl.js"
+          ./target/release/cloner.exe db create app --dry-run
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cloner-x86_64-windows
+          path: rust/target/release/cloner.exe
           if-no-files-found: error

@@ -23,7 +23,15 @@ standalone backup and database-reset tool.
 ```bash
 # install to ~/.local/bin (installs build deps + Rust if needed)
 ./rust/install.sh
+```
 
+```powershell
+# Windows: installs the C++ Build Tools + Rust if needed, then copies
+# cloner.exe to %USERPROFILE%\.local\bin
+.\rust\install.ps1 -AddToPath
+```
+
+```bash
 # create a starter config
 cloner init
 
@@ -44,6 +52,8 @@ cd rust
 cargo build --release
 ./target/release/cloner --help
 ```
+
+On Windows the binary is `target\release\cloner.exe`.
 
 Example `dl.js`:
 
@@ -104,8 +114,8 @@ The suite contains unit tests for config/Compose resolution, dotenv and
 interpolation handling, shell quoting, database command construction, sync
 filters, the JavaScript DSL evaluator and the starter template, plus CLI
 integration tests for `init`, config discovery, `db` actions and dry runs.
-GitHub Actions runs the same tests on Linux and macOS, checks the MSRV (1.89),
-and builds a release binary.
+GitHub Actions runs the same tests on Linux, macOS and Windows, checks the
+MSRV (1.89), and builds release binaries for Linux and Windows.
 
 ## Documentation
 

@@ -453,8 +453,8 @@ fn resolve_path_owned(value: &str) -> PathBuf {
 }
 
 fn basename(path: &str) -> String {
-    path.trim_end_matches('/')
-        .rsplit('/')
+    path.trim_end_matches(['/', '\\'])
+        .rsplit(['/', '\\'])
         .next()
         .unwrap_or("clone")
         .to_string()
@@ -1271,8 +1271,8 @@ services:
         );
         let compose = resolved.local.compose.as_ref().unwrap();
         assert_eq!(
-            compose.path,
-            dir.path().join("app/dev-docker").to_string_lossy()
+            PathBuf::from(&compose.path),
+            dir.path().join("app").join("dev-docker")
         );
         assert_eq!(
             resolved.local.env_file,
@@ -1288,20 +1288,18 @@ services:
         let dir = tempfile::tempdir().unwrap();
         let config_path = dir.path().join("dl.js");
         std::fs::write(&config_path, "").unwrap();
+        let root = dir.path().join("legacy");
         let config = Config {
             project: Project {
-                root: Some("/legacy/root".into()),
+                root: Some(root.to_string_lossy().into_owned()),
                 env: Some("staging".into()),
             },
             ..Config::default()
         };
         let resolved = config.resolve(&config_path).unwrap();
-        assert_eq!(resolved.project_root, PathBuf::from("/legacy/root"));
+        assert_eq!(resolved.project_root, root);
         assert_eq!(resolved.project_env, "staging");
-        assert_eq!(
-            resolved.local.env_file,
-            Some(PathBuf::from("/legacy/root/.env"))
-        );
+        assert_eq!(resolved.local.env_file, Some(root.join(".env")));
     }
 
     #[test]

@@ -5,7 +5,7 @@
 - Root: legacy Ruby/Thor gem (`lib/cloner/`, generator under `lib/generators/`, tests under `test/`).
 - `rust/`: active single-binary rewrite with a JavaScript DSL (`dl.js`). Prefer changing this unless the task is explicitly about the legacy gem.
 - User docs live in `rust/docs/guides/`; the `migrate-dl-thor-to-dl-js` skill is `.opencode/skills/migrate-dl-thor-to-dl-js/SKILL.md`.
-- New installs use `rust/install.sh` (or `cargo build --release` from `rust/`).
+- New installs use `rust/install.sh` on Linux/macOS and `rust/install.ps1` on Windows (or `cargo build --release` from `rust/`).
 
 ## Rust commands
 
@@ -24,7 +24,7 @@ cargo test config::tests::resolves_compose_service_from_env
 cargo test --test cli prints_version
 ```
 
-- CI (`.github/workflows/rust.yml`) runs fmt, clippy with `-D warnings`, unit tests, CLI integration tests, MSRV 1.89, and a release build on Linux/macOS.
+- CI (`.github/workflows/rust.yml`) runs fmt, clippy with `-D warnings`, unit tests, CLI integration tests and MSRV 1.89 on Linux/macOS/Windows, plus release builds for Linux and Windows.
 - CI paths are only `rust/**` and the workflow file; root-only changes do not trigger Rust CI.
 - Rust edition is 2024, MSRV 1.89. Do not raise either without updating CI and `Cargo.toml`.
 - Keep dependencies from crates.io only, permissively licensed. Do not add local path dependencies; `/data/_swap/rsync` is GPL-3.0-or-later and deliberately rejected.
@@ -56,9 +56,11 @@ cargo test --test cli prints_version
 - `files: []` means no file sync. Hooks run with cwd `local.root`.
 - `db reset` requires the database to exist; `db create` first.
 - The starter template in `main.rs` is covered by a test and must remain valid JavaScript.
+- Local commands run through a POSIX shell (`sh -c`) resolved by `util::local_shell()`: `CLONER_SHELL` > `sh`/`bash` on PATH (Windows App Execution Aliases skipped) > Git for Windows `sh.exe`. Remote commands use `sh -lc`.
+- Platform differences stay behind `#[cfg(unix)]`/`#[cfg(windows)]`: SSH agent transport (Unix socket vs OpenSSH named pipe/Pageant), POSIX mode bits, symlink creation, `HOME` vs `USERPROFILE`. Keep the crate warning-free on Windows as well.
 
 ## Docs
 
 - `rust/docs/guides/`: `installer.md`, `dsl.md`, `cli.md`, `cli-usage.md`, `operations.md`, `thor-to-js-conversion.md`, `migration-from-thor.md`.
 - Keep docs aligned with executable sources (`src/main.rs`, `src/config.rs`, `Cargo.toml`, CI) rather than duplicating stale prose.
-- Installer validation: `shellcheck rust/install.sh` and `cd rust && ./install.sh --no-deps --dry-run`.
+- Installer validation: `shellcheck rust/install.sh` and `cd rust && ./install.sh --no-deps --dry-run`; on Windows `pwsh -NoProfile -File rust/install.ps1 -NoDeps -DryRun`.

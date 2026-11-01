@@ -1,5 +1,6 @@
 use anyhow::{Context, Result, anyhow, bail};
 use russh::client::{self, Handle};
+use russh::keys::agent::client::{AgentClient, AgentStream};
 use russh::keys::{PrivateKeyWithHashAlg, PublicKeyOrCertificate, load_secret_key};
 use russh_sftp::client::SftpSession;
 use std::path::{Path, PathBuf};
@@ -8,7 +9,7 @@ use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 
 use crate::config::ResolvedRemote;
-use crate::util::{expand_tilde, shq};
+use crate::util::{expand_tilde, home_dir, shq};
 
 pub struct Client {
     strict_host_key_checking: bool,
@@ -41,9 +42,7 @@ impl client::Handler for Client {
             let path = self
                 .known_hosts
                 .clone()
-                .or_else(|| {
-                    std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".ssh/known_hosts"))
-                })
+                .or_else(|| home_dir().map(|h| h.join(".ssh/known_hosts")))
                 .ok_or_else(|| anyhow!("cannot locate known_hosts"))?;
             let known = russh::keys::check_known_hosts_path(&self.host, self.port, key, &path)
                 .with_context(|| format!("checking host key against {}", path.display()))?;
@@ -101,9 +100,7 @@ impl Ssh {
 
         // Prefer the SSH agent when one is available (this is how the
         // developer's `ssh` command authenticates in practice).
-        if std::env::var_os("SSH_AUTH_SOCK").is_some()
-            && let Ok(mut agent) = russh::keys::agent::client::AgentClient::connect_env().await
-        {
+        if let Ok(mut agent) = open_agent().await {
             match agent.request_identities().await {
                 Ok(identities) => {
                     log::debug!("SSH agent offered {} identities", identities.len());
@@ -299,11 +296,45 @@ impl Ssh {
     }
 }
 
+/// SSH agent client with the transport erased, so the Unix socket transport
+/// and the Windows named pipe/Pageant transports share one code path.
+type Agent = AgentClient<Box<dyn AgentStream + Send + Unpin>>;
+
+/// Connects to the local SSH agent using the platform's agent transport.
+#[cfg(unix)]
+async fn open_agent() -> Result<Agent> {
+    if std::env::var_os("SSH_AUTH_SOCK").is_none() {
+        return Err(anyhow!("SSH_AUTH_SOCK is not set"));
+    }
+    Ok(AgentClient::connect_env().await?.dynamic())
+}
+
+#[cfg(windows)]
+async fn open_agent() -> Result<Agent> {
+    // OpenSSH for Windows serves requests over a named pipe; PuTTY's Pageant
+    // has its own transport. Try both, like `ssh` does.
+    let pipe = std::env::var_os("SSH_AUTH_SOCK")
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| std::ffi::OsString::from(r"\\.\pipe\openssh-ssh-agent"));
+    match AgentClient::connect_named_pipe(&pipe).await {
+        Ok(agent) => Ok(agent.dynamic()),
+        Err(pipe_error) => AgentClient::connect_pageant()
+            .await
+            .map(|agent| agent.dynamic())
+            .with_context(|| format!("no SSH agent on {pipe:?}: {pipe_error}")),
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+async fn open_agent() -> Result<Agent> {
+    Err(anyhow!("this platform has no SSH agent support"))
+}
+
 fn find_identity(cfg: &ResolvedRemote) -> Option<PathBuf> {
     if let Some(path) = &cfg.identity_file {
         return Some(path.clone());
     }
-    let home = std::env::var_os("HOME").map(PathBuf::from)?;
+    let home = home_dir()?;
     for name in ["id_ed25519", "id_rsa", "id_ecdsa"] {
         let path = home.join(".ssh").join(name);
         if path.exists() {

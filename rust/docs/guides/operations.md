@@ -39,14 +39,18 @@ cargo build --release --target x86_64-unknown-linux-musl
 ## SSH
 
 - Authentication tries the SSH agent first, then key files, then password.
+- On Windows the agent is reached over the OpenSSH named pipe (`SSH_AUTH_SOCK`,
+  defaulting to `\\.\pipe\openssh-ssh-agent`) or Pageant.
 - Useful environment variables:
-  - `SSH_AUTH_SOCK` — agent socket
+  - `SSH_AUTH_SOCK` — agent socket (Unix) or named pipe (Windows)
   - `SSH_KEY_PASSPHRASE` / `CLONER_SSH_KEY_PASSPHRASE` — encrypted key
   - `PROD_SSH_PASSWORD` and `remote.passwordEnv` — password auth
 - `strictHostKeyChecking: true` verifies against `known_hosts`; the default
   `false` logs the fingerprint and accepts it. Use `true` in production.
 - Remote commands run through `sh -lc`, so `fish` login shells do not break
   `&&`, redirects, or subshells.
+- Local commands run through `sh -c` as well. On Windows cloner uses Git for
+  Windows' `sh.exe`; set `CLONER_SHELL` to choose another POSIX shell.
 - A long-running dump uses one SSH session; SFTP transfers open separate
   channels on the same session.
 
