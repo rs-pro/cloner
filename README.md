@@ -2,6 +2,13 @@
 
 Easily clone your production Mongoid or PostgreSQL / MySQL database and files for local development or staging area.
 
+> **Rust implementation:** a single-binary rewrite with a JavaScript DSL, SSH/SFTP,
+> Compose/env resolution, backup mode and `pg_dev`-style database commands lives
+> in [`rust/`](rust/README.md). See the [installation guide](rust/docs/guides/installer.md),
+> [DSL reference](rust/docs/guides/dsl.md), [CLI reference](rust/docs/guides/cli.md),
+> [CLI usage after `thor dl`](rust/docs/guides/cli-usage.md) and
+> [migration guide](rust/docs/guides/thor-to-js-conversion.md).
+
 Uses rsync and database-specific default dump/restore tools (pg_dump/pg_restore, mysqldump/mysql, mongodump/mongorestore)
 
 
