@@ -52,9 +52,194 @@ pub struct LocalContext {
     pub db: ResolvedDb,
 }
 
+/// Host services available to DSL extensions.
+///
+/// Extensions are installed before the config module is evaluated, so they can
+/// provide variables, namespaces and functions that `dl.js` uses at load time
+/// (for example `rsbackup.serverUrl` or `postgres.databases()`).
+pub struct DslEnvironment {
+    pub config_path: PathBuf,
+    pub project_root: PathBuf,
+    pub mode: RunMode,
+    pub dry_run: bool,
+    pub from: Option<String>,
+    pub runner: Rc<dyn DslCommandRunner>,
+}
+
+impl DslEnvironment {
+    fn new(
+        config_path: &Path,
+        mode: RunMode,
+        dry_run: bool,
+        from: Option<&str>,
+        runner: Rc<dyn DslCommandRunner>,
+    ) -> Self {
+        let project_root = config_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        Self {
+            config_path: config_path.to_path_buf(),
+            project_root,
+            mode,
+            dry_run,
+            from: from.map(str::to_string),
+            runner,
+        }
+    }
+}
+
+/// Run local/remote commands from an extension without depending on the
+/// Cloner runtime state. Closures are evaluated lazily, so an extension may be
+/// installed before the DSL config has been exported.
+pub trait DslCommandRunner {
+    fn run_local(&self, command: &str) -> Result<String>;
+    fn run_remote(&self, command: &str) -> Result<String>;
+}
+
+struct StateRunner {
+    state: Rc<RefCell<Option<RuntimeState>>>,
+    handle: tokio::runtime::Handle,
+}
+
+impl DslCommandRunner for StateRunner {
+    fn run_local(&self, command: &str) -> Result<String> {
+        let cwd = {
+            let guard = self.state.borrow();
+            guard
+                .as_ref()
+                .map(|st| st.resolved.project_root.clone())
+                .ok_or_else(|| anyhow!("config is not loaded yet"))?
+        };
+        let output = crate::shell::run_capture(command, Some(&cwd), &[], None)?;
+        if output.code != 0 {
+            bail!(
+                "local command failed with exit code {}: {command}\n{}",
+                output.code,
+                output.stderr.trim()
+            );
+        }
+        Ok(output.stdout)
+    }
+
+    fn run_remote(&self, command: &str) -> Result<String> {
+        let mut guard = self.state.borrow_mut();
+        let st = guard
+            .as_mut()
+            .ok_or_else(|| anyhow!("config is not loaded yet"))?;
+        let ssh = st.ssh_mut(&self.handle)?;
+        let output = self.handle.block_on(ssh.exec(command))?;
+        if output.code != 0 {
+            bail!(
+                "remote command failed with exit code {}: {command}\n{}",
+                output.code,
+                output.stderr.trim()
+            );
+        }
+        Ok(output.stdout)
+    }
+}
+
+struct UnavailableRunner;
+
+impl DslCommandRunner for UnavailableRunner {
+    fn run_local(&self, _command: &str) -> Result<String> {
+        bail!("local commands are not available while evaluating only the config")
+    }
+
+    fn run_remote(&self, _command: &str) -> Result<String> {
+        bail!("remote commands are not available while evaluating only the config")
+    }
+}
+
+/// Extension point for products built on Cloner (for example RSBackup).
+///
+/// An extension can add globals, variables, namespaces and functions. It can
+/// also declare extra hook names; those hooks are called after `afterAll` when
+/// the default pipeline runs. A config-level `execute()` can call the extension
+/// functions directly instead.
+pub trait DslExtension {
+    fn name(&self) -> &'static str;
+
+    fn install<'js>(
+        &self,
+        ctx: &Ctx<'js>,
+        globals: &Object<'js>,
+        env: &DslEnvironment,
+    ) -> Result<()>;
+
+    /// Extra hook names implemented in the DSL `hooks` object.
+    fn hooks(&self) -> &'static [&'static str] {
+        &[]
+    }
+}
+
+/// Fluent entry point for embedding the Cloner DSL.
+#[derive(Default)]
+pub struct DslBuilder {
+    options: RunOptions,
+    extensions: Vec<Rc<dyn DslExtension>>,
+}
+
+impl DslBuilder {
+    pub fn new(options: RunOptions) -> Self {
+        Self {
+            options,
+            extensions: Vec::new(),
+        }
+    }
+
+    pub fn with_extension(mut self, extension: impl DslExtension + 'static) -> Self {
+        self.extensions.push(Rc::new(extension));
+        self
+    }
+
+    pub fn eval_config(&self, config_path: &Path) -> Result<Config> {
+        eval_config_with_extensions(config_path, &self.extensions)
+    }
+
+    pub fn execute(&self, config_path: &Path) -> Result<()> {
+        execute_with_extensions(config_path, self.options.clone(), &self.extensions)
+    }
+}
+
+fn install_extensions<'js>(
+    ctx: &Ctx<'js>,
+    globals: &Object<'js>,
+    env: &DslEnvironment,
+    extensions: &[Rc<dyn DslExtension>],
+) -> Result<()> {
+    for extension in extensions {
+        extension
+            .install(ctx, globals, env)
+            .with_context(|| format!("install DSL extension {}", extension.name()))?;
+    }
+    Ok(())
+}
+
+fn run_extension_hooks<'js>(
+    ctx: &Ctx<'js>,
+    exports: &Object<'js>,
+    extensions: &[Rc<dyn DslExtension>],
+) -> Result<()> {
+    for extension in extensions {
+        for hook in extension.hooks() {
+            call_hook(ctx, exports, hook)?;
+        }
+    }
+    Ok(())
+}
+
 /// Evaluate only the exported config. Hooks are not run and no remote
 /// connection is made; this is used by `cloner db ...` and `validate`.
 pub fn eval_config(config_path: &Path) -> Result<Config> {
+    eval_config_with_extensions(config_path, &[])
+}
+
+pub fn eval_config_with_extensions(
+    config_path: &Path,
+    extensions: &[Rc<dyn DslExtension>],
+) -> Result<Config> {
     let source = std::fs::read_to_string(config_path)
         .with_context(|| format!("read {}", config_path.display()))?;
     let canonical = crate::util::clean_path(
@@ -90,6 +275,14 @@ pub fn eval_config(config_path: &Path) -> Result<Config> {
         globals.set("__cloner_log", Function::new(ctx.clone(), |_: String| {})?)?;
         ctx.eval::<(), _>(PRELUDE)
             .map_err(|e| anyhow!("initialize DSL runtime: {e}"))?;
+        let env = DslEnvironment::new(
+            &canonical,
+            RunMode::Validate,
+            true,
+            None,
+            Rc::new(UnavailableRunner),
+        );
+        install_extensions(&ctx, &globals, &env, extensions)?;
         ctx.eval::<(), _>(source.as_str())
             .map_err(|e| anyhow!("evaluate {}: {e}", canonical.display()))?;
 
@@ -192,6 +385,14 @@ function fmt(value) {
 "#;
 
 pub fn execute(config_path: &Path, options: RunOptions) -> Result<()> {
+    execute_with_extensions(config_path, options, &[])
+}
+
+pub fn execute_with_extensions(
+    config_path: &Path,
+    options: RunOptions,
+    extensions: &[Rc<dyn DslExtension>],
+) -> Result<()> {
     let source = std::fs::read_to_string(config_path)
         .with_context(|| format!("read {}", config_path.display()))?;
     let canonical = crate::util::clean_path(
@@ -215,6 +416,18 @@ pub fn execute(config_path: &Path, options: RunOptions) -> Result<()> {
 
         ctx.eval::<(), _>(PRELUDE)
             .map_err(|e| anyhow!("initialize DSL runtime: {e}"))?;
+        let runner = Rc::new(StateRunner {
+            state: state.clone(),
+            handle: handle.clone(),
+        });
+        let env = DslEnvironment::new(
+            &canonical,
+            options.mode,
+            options.dry_run,
+            options.from.as_deref(),
+            runner,
+        );
+        install_extensions(&ctx, &ctx.globals(), &env, extensions)?;
         ctx.eval::<(), _>(source.as_str())
             .map_err(|e| anyhow!("evaluate {}: {e}", canonical.display()))?;
 
@@ -316,6 +529,7 @@ pub fn execute(config_path: &Path, options: RunOptions) -> Result<()> {
             if options.mode == RunMode::Backup {
                 write_manifest(&state)?;
             }
+            run_extension_hooks(&ctx, &exports, extensions)?;
             return Ok(());
         }
 
@@ -336,6 +550,7 @@ pub fn execute(config_path: &Path, options: RunOptions) -> Result<()> {
         }
 
         call_hook(&ctx, &exports, "afterAll")?;
+        run_extension_hooks(&ctx, &exports, extensions)?;
         Ok(())
     })
 }
@@ -1432,6 +1647,93 @@ mod tests {
             eval_config(&path).unwrap().remote.unwrap().host,
             "example.com"
         );
+    }
+
+    struct ExtensionFixture {
+        marker: PathBuf,
+    }
+
+    impl DslExtension for ExtensionFixture {
+        fn name(&self) -> &'static str {
+            "extension-fixture"
+        }
+
+        fn install<'js>(
+            &self,
+            ctx: &Ctx<'js>,
+            globals: &Object<'js>,
+            env: &DslEnvironment,
+        ) -> Result<()> {
+            globals.set("RSBACKUP_MODE", "test")?;
+            let runner = env.runner.clone();
+            let marker = self.marker.clone();
+            let write_marker = Function::new(ctx.clone(), move || -> rquickjs::Result<()> {
+                let command = format!(
+                    "printf x >> {}",
+                    crate::shell::shq(&marker.to_string_lossy())
+                );
+                runner.run_local(&command).map_err(js_error)?;
+                Ok(())
+            })?;
+            globals.set("rsbackupWriteMarker", write_marker)?;
+            Ok(())
+        }
+
+        fn hooks(&self) -> &'static [&'static str] {
+            &["rsbackupAfter"]
+        }
+    }
+
+    #[test]
+    fn extensions_can_add_variables_and_functions() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = config_file(
+            &dir,
+            "dl.js",
+            r#"
+            module.exports = {
+              local: { root: __dirname, env: "rb-" + RSBACKUP_MODE },
+              execute() {},
+            };
+            "#,
+        );
+        let config = DslBuilder::new(RunOptions::default())
+            .with_extension(ExtensionFixture {
+                marker: dir.path().join("marker"),
+            })
+            .eval_config(&path)
+            .unwrap();
+        assert_eq!(config.local.env, "rb-test");
+    }
+
+    #[test]
+    fn extensions_can_run_commands_and_register_hooks() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("marker");
+        let path = config_file(
+            &dir,
+            "dl.js",
+            r#"
+            module.exports = {
+              local: { root: __dirname, env: "test" },
+              hooks: {
+                rsbackupAfter() { rsbackupWriteMarker(); },
+              },
+            };
+            "#,
+        );
+        DslBuilder::new(RunOptions {
+            skip_database: true,
+            skip_files: true,
+            ..RunOptions::default()
+        })
+        .with_extension(ExtensionFixture {
+            marker: marker.clone(),
+        })
+        .execute(&path)
+        .unwrap();
+        assert!(marker.is_file(), "extension hook did not run");
+        assert_eq!(std::fs::read_to_string(marker).unwrap(), "x");
     }
 
     #[test]

@@ -195,7 +195,9 @@ cloner
 
 The DSL is evaluated before any action. A user-supplied `execute()` replaces
 the default `clone_db()` + `clone_files()` pipeline, which makes the tool
-usable for custom maintenance/backup workflows without forking it.
+usable for custom maintenance/backup workflows without forking it. Embedders
+can also register product-specific variables, namespaces and hooks with
+`dsl::DslBuilder`/`dsl::DslExtension`.
 
 ## License
 

@@ -400,6 +400,77 @@ sync("public/uploads", "public/uploads");
 `basename` accept both `/` and `\` separators, so they work with Windows paths
 as well as remote POSIX paths.
 
+## Embedding and extending the DSL (Rust)
+
+The DSL is available as a library, not only through the `cloner` binary.
+`cloner::dsl::DslBuilder` installs the standard runtime and any product-specific
+extensions before `dl.js` is evaluated:
+
+```rust
+use anyhow::Result;
+use cloner::dsl::{DslBuilder, DslEnvironment, DslExtension, RunOptions};
+use rquickjs::{Ctx, Function, Object};
+
+struct RsBackupExtension;
+
+impl DslExtension for RsBackupExtension {
+    fn name(&self) -> &'static str {
+        "rsbackup"
+    }
+
+    fn install<'js>(
+        &self,
+        ctx: &Ctx<'js>,
+        globals: &Object<'js>,
+        _env: &DslEnvironment,
+    ) -> Result<()> {
+        // Variables
+        globals.set("RSBACKUP_API", "https://rsbackup.example.com")?;
+
+        // Functions / namespaces
+        let tool = Function::new(ctx.clone(), |value: String| format!("rsbackup:{value}"))?;
+        globals.set("rsbackupTool", tool)?;
+
+        // A namespace object works the same way:
+        // let postgres = Object::new(ctx.clone())?;
+        // postgres.set("databases", Function::new(ctx.clone(), list_databases)?)?;
+        // globals.set("postgres", postgres)?;
+        Ok(())
+    }
+
+    // Optional hooks implemented in the DSL `hooks` object. They run after
+    // `afterAll` when the default pipeline is used.
+    fn hooks(&self) -> &'static [&'static str] {
+        &["rsbackupAfter"]
+    }
+}
+
+fn main() -> Result<()> {
+    let options = RunOptions::default();
+    DslBuilder::new(options)
+        .with_extension(RsBackupExtension)
+        .execute(std::path::Path::new("dl.js"))?;
+    Ok(())
+}
+```
+
+`DslEnvironment` exposes the config path, project root, run mode, `--from`
+value, and a `DslCommandRunner` for local/remote commands. The runner is lazy:
+it is only usable once the config has been exported and runtime state exists,
+so call it from `hooks` or `execute()`, not from top-level config code.
+
+Extensions can therefore add:
+
+- variables (`RSBACKUP_API`, `rsbackup.serverUrl`),
+- functions and namespaces (`postgres.databases()`, `rsbackup.snapshot(id)`),
+- typed commands that wrap `env.runner`,
+- extra lifecycle hooks declared by `hooks()`.
+
+This is how a downstream product can keep its own commands and variables in
+its crate while reusing Cloner's config evaluation, hooks, Compose/Kubernetes
+targets and database primitives. The JavaScript entry point remains
+`module.exports`/`defineConfig`, so existing `dl.js` files continue to work.
+
 ## `defineConfig`
 
 `defineConfig` is an identity helper for editor autocompletion and readability:

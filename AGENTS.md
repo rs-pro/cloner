@@ -39,7 +39,7 @@ cargo test --test cli prints_version
 
 - `src/lib.rs` exposes reusable modules; `src/main.rs` is the thin clap CLI. Keep primitives usable without the DSL/SSH so the internal backup app can reuse them.
 - `src/main.rs`: CLI, config discovery, generated `dl.js` template, `db`/`k8s` option mapping.
-- `src/dsl.rs`: QuickJS runtime, config evaluation, lifecycle hooks, `execute()` override, built-ins.
+- `src/dsl.rs`: QuickJS runtime, config evaluation, lifecycle hooks, `execute()` override, built-ins, and the `DslBuilder`/`DslExtension` embedding API (`DslEnvironment`, `DslCommandRunner`). Downstream products add variables, namespaces/commands and extra hooks through extensions instead of forking the DSL.
 - `src/config.rs`: config schema, path/env resolution, `describe()` for `validate`.
 - `src/compose.rs`: Compose parsing, service/engine detection, connection inference.
 - `src/engine.rs`: database engines and pure dump/restore/query/ping/admin command builders. No execution here.
