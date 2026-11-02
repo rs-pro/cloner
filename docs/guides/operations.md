@@ -20,7 +20,6 @@ subsystem enabled (the OpenSSH default).
 ## Building
 
 ```bash
-cd rust
 cargo build --release
 ./target/release/cloner --version
 ```

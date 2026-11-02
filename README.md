@@ -1,327 +1,188 @@
 # Cloner
 
-Easily clone your production Mongoid or PostgreSQL / MySQL database and files for local development or staging area.
+Clone production databases and files into local development or staging
+environments.
 
-> **Rust implementation:** a single-binary rewrite with a JavaScript DSL, SSH/SFTP,
-> Compose/env resolution, backup mode and `pg_dev`-style database commands lives
-> in [`rust/`](rust/README.md). See the [installation guide](rust/docs/guides/installer.md),
-> [DSL reference](rust/docs/guides/dsl.md), [CLI reference](rust/docs/guides/cli.md),
-> [CLI usage after `thor dl`](rust/docs/guides/cli-usage.md) and
-> [migration guide](rust/docs/guides/thor-to-js-conversion.md).
+This repository contains two implementations:
 
-Uses rsync and database-specific default dump/restore tools (pg_dump/pg_restore, mysqldump/mysql, mongodump/mongorestore)
+- **Rust (main):** a single binary with a JavaScript DSL (`dl.js`), SSH/SFTP
+  sync, Compose/`.env` resolution, backup mode and `pg_dev`-style database
+  commands. No Ruby, `ssh`, `rsync`, `scp` or JavaScript runtime is required.
+- **Ruby/Thor (legacy, still supported):** the original gem with a `dl.thor`
+  config and `bundle exec thor dl`. See the
+  [Ruby README](docs/ruby-readme.md). It remains supported for existing
+  installations and projects that prefer Ruby, and its configuration syntax maps
+  closely to the Rust DSL.
 
+## Quick start
 
-## Installation
+```bash
+# install to ~/.local/bin (installs build deps + Rust if needed)
+./install.sh
 
-Add this line to your application's Gemfile:
+# create a starter config
+cloner init
 
-```ruby
-gem 'cloner'
+# inspect the resolved config (passwords redacted)
+cloner validate
+
+# clone database + files
+cloner run
+
+# non-destructive backup
+cloner backup --to /var/backups/myapp
 ```
 
-And then execute:
-
-    $ bundle
-
-Or install it yourself as:
-
-    $ gem install cloner
-
-## Usage
-
-For generate cloner base template, run:
-
-```
-bundle exec rails generate cloner
+```powershell
+# Windows: installs the C++ Build Tools + Rust if needed, then copies
+# cloner.exe to %USERPROFILE%\.local\bin
+.\install.ps1 -AddToPath
 ```
 
-This is create `lib/tasks/dl.thor` file with following content:
-```ruby
-require 'cloner'
+Or build manually from the repository root:
 
-class Dl < Cloner::Base
-  no_commands do
-    def rails_path
-      File.expand_path("../../../config/environment", __FILE__)
-    end
-    def ssh_host
-      'hottea.ru'
-    end
-    def ssh_user
-      'tea'
-    end
-    def remote_dump_path
-      '/data/tea/dump'
-    end
-    def remote_app_path
-      "/data/tea/app/current"
-    end
-  end
-
-  desc "download", "clone files and DB from production"
-  def download
-    load_env
-    clone_db
-    rsync_public("ckeditor_assets")
-    rsync_public("uploads")
-  end
-end
+```bash
+cargo build --release --locked
+./target/release/cloner --help
 ```
 
-Adjust it to your project and deployment.
+On Windows the binary is `target\release\cloner.exe`.
 
-Run it:
+Example `dl.js`:
 
-    thor dl
+```js
+module.exports = {
+  local: {
+    root: __dirname,
+    env: "development",
+    compose: { path: "dev-docker", file: "compose.yml", service: "db" },
+  },
 
+  remote: {
+    host: "example.com",
+    user: "root",
+    port: 22,
+    appPath: "/srv/app",
+    compose: { file: "compose.yml", service: "postgres" },
+  },
 
-If you generate extended cloner template as: `rails g cloner -e`,
-you can run `thor dl` with additional parameters, for example:
-```
-bundle exec thor dl -D # For skip clone database
-bundle exec thor dl -F # For skip clone files
-```
+  database: {
+    engine: "postgres",
+    reset: "drop-create",
+  },
 
-For details see help:
-```
-bundle exec thor help dl:download
+  files: [
+    { from: "public/uploads", to: "public/uploads" },
+  ],
 
-Usage:
-  thor dl:download
-
-Options:
-      [--from=FROM]                            # stage name where cloner get data
-                                               # Default: production
-  -D, [--skip-database], [--no-skip-database]  # skip clone database
-  -F, [--skip-files], [--no-skip-files]        # skip clone files
-
-clone files and DB from production
-```
-
-## Additional
-
-All functions from cloner/internal.rb can be overriden, for example:
-
-
-    def verbose?
-      false
-    end
-    def env_from
-      'production'
-    end
-    def ssh_opts
-      {}
-    end
-
-## Docker Compose Support
-
-Cloner now supports Docker Compose for both local and remote database operations. This is useful when your databases run inside Docker containers.
-
-### Generating Docker Compose Template
-
-To generate a template with Docker Compose examples:
-
-```
-bundle exec rails generate cloner -d
+  hooks: {
+    afterRestore() {
+      shell("bin/rails db:migrate");
+    },
+  },
+};
 ```
 
-### Configuration
+`dl.js` is deliberately close to `dl.thor`: `ssh_host` becomes `remote.host`,
+`remote_app_path` becomes `remote.appPath`, `remote_docker_compose_*` becomes
+`remote.compose`, and `rsync_public(...)` becomes a `files` entry.
 
-Add these methods to your `dl.thor` file to enable Docker Compose:
+## Commands
 
-```ruby
-# For remote Docker Compose
-def remote_docker_compose?
-  true
-end
-
-def remote_docker_compose_service
-  'db'  # Your database service name in compose.yml
-end
-
-def remote_docker_compose_path
-  remote_app_path  # Path where compose.yml is located
-end
-
-# Optional: Override compose file name (default is 'compose.yml')
-def remote_docker_compose_file
-  'docker-compose.yml'  # Use if your file is named differently
-end
-
-# For local Docker Compose
-def local_docker_compose?
-  true
-end
-
-def local_docker_compose_service
-  'db'  # Your local database service name
-end
-
-def local_docker_compose_path
-  Rails.root.to_s  # Path where your local compose.yml is located
-end
-
-# Optional: Override compose file name for local (default is 'compose.yml')
-def local_docker_compose_file
-  'docker-compose.yml'  # Use if your file is named differently
-end
-
-# Optional: Override local database config (reads from local .env by default)
-def local_db_config
-  {
-    adapter: 'postgresql',
-    host: read_local_env('DB_HOST') || 'localhost',
-    port: read_local_env('DB_PORT') || '5432',
-    database: read_local_env('DB_NAME'),
-    username: read_local_env('DB_USER'),
-    password: read_local_env('DB_PASSWORD')
-  }.stringify_keys
-end
+```text
+cloner run [--skip-database] [--skip-files] [--dry-run] [--from ENV]
+cloner backup --to DIR
+cloner validate
+cloner init
+cloner db create|reset|drop|migrate|seed ...
 ```
 
-### PostgreSQL with Docker Compose Example
+See the full [CLI reference](docs/guides/cli.md).
 
-```ruby
-class Dl < Cloner::Base
-  no_commands do
-    def ssh_host
-      'production.example.com'
-    end
-    
-    def ssh_user
-      'deploy'
-    end
-    
-    def remote_app_path
-      '/home/deploy/myapp'
-    end
-    
-    def remote_dump_path
-      "#{remote_app_path}/tmp_dump"
-    end
-    
-    # Enable Docker Compose for remote
-    def remote_docker_compose?
-      true
-    end
-    
-    def remote_docker_compose_service
-      'postgres'
-    end
-    
-    # Override to read credentials from .env file
-    def read_ar_r_conf
-      # Read from remote .env file
-      env_content = ""
-      do_ssh do |ssh|
-        env_content = ssh.exec!("cat #{e remote_app_path}/.env")
-      end
-      
-      # Parse .env content
-      env_vars = {}
-      env_content.each_line do |line|
-        next if line.strip.empty? || line.strip.start_with?('#')
-        key, value = line.strip.split('=', 2)
-        next unless key && value
-        value = value.gsub(/^["']|["']$/, '')
-        env_vars[key] = value
-      end
-      
-      {
-        adapter: "postgresql",
-        host: env_vars['DB_HOST'] || 'postgres',
-        database: env_vars['DB_NAME'],
-        username: env_vars['DB_USER'],
-        password: env_vars['DB_PASSWORD']
-      }.stringify_keys
-    end
-    
-    # Enable Docker Compose for local
-    def local_docker_compose?
-      true
-    end
-    
-    def local_docker_compose_service
-      'db'
-    end
-  end
-  
-  desc "download", "clone DB from production"
-  def download
-    load_env
-    clone_db
-  end
-end
+## Features
+
+- JavaScript DSL (`dl.js`) similar in spirit to `dl.thor`
+- SSH via [`russh`](https://github.com/warp-tech/russh) (Apache-2.0)
+- Incremental file sync over SFTP (`russh-sftp`, MIT/Apache-2.0)
+- Embedded QuickJS via `rquickjs` (MIT) — no Node.js dependency
+- PostgreSQL, MySQL and MongoDB
+- Reads Docker Compose and `.env` files; no need to repeat DB credentials
+- `pg_dev`-style `cloner db create/reset/drop/migrate/seed`
+- Backup mode with a JSON manifest
+
+> The local `/data/_swap/rsync` crate is GPL-3.0-or-later. It is deliberately not
+> linked into this MIT-licensed binary; file sync is implemented on top of
+> `russh-sftp`.
+
+## Ruby/Thor (legacy)
+
+The original Ruby gem lives in the same repository (`lib/`, `test/`,
+`cloner.gemspec`, `Gemfile`). It is still supported and documented in the
+[Ruby README](docs/ruby-readme.md), including Docker Compose support, `thor dl`
+options and the changelog.
+
+For migration guidance, see
+[Converting `dl.thor` to `dl.js`](docs/guides/thor-to-js-conversion.md).
+
+## Testing
+
+```bash
+cargo test --all-targets --locked
+cargo clippy --all-targets --locked -- -D warnings
+cargo fmt --all -- --check
 ```
 
-### How It Works
+The suite contains unit tests for config/Compose resolution, dotenv and
+interpolation handling, shell quoting, database command construction, sync
+filters, the JavaScript DSL evaluator and the starter template, plus CLI
+integration tests for `init`, config discovery, `db` actions and dry runs.
+GitHub Actions runs the same tests on Linux, macOS and Windows, checks the
+MSRV (1.89), and builds release binaries for Linux and Windows.
 
-When Docker Compose is enabled:
+The legacy Ruby suite uses:
 
-1. **Remote operations**: Database dump commands are wrapped with `docker compose exec` on the remote server
-2. **Local operations**: Database restore commands pipe data into `docker compose exec -T` locally
-3. **Automatic command wrapping**: The gem automatically detects and wraps database commands appropriately
-
-### Supported Databases
-
-Docker Compose support is available for:
-- PostgreSQL
-- MySQL
-
-## Changelog
-
-### 0.14.0
-
-- Add Docker Compose support for local and remote database operations
-- Add Docker Compose generator template with `-d` option
-- Support automatic command wrapping for PostgreSQL and MySQL when using Docker Compose
-- Add helper methods for Docker Compose configuration
-- Default compose file name is now 'compose.yml' (configurable via docker_compose_file methods)
-- Add `local_db_config` and `remote_db_config` methods for customizing database configurations
-- Support reading from .env files for both local and remote environments
-- Replace direct usage of `ar_conf` and `ar_r_conf` with configurable `local_db_config` and `remote_db_config`
-
-### 0.10.0
-
-- Support rails 6 multi database activerecord apps via option
-
-```
-def multi_db?
-  true
-end
-def clone_databases
-  ["primary", "gis"]
-  # nil - clone all databases
-end
+```bash
+bundle install
+bundle exec ruby test/test_without_rails.rb
+bundle exec ruby test/test_docker_compose.rb
 ```
 
-- Backwards incompatible change:
+## Documentation
 
-Changed default dump file name to cloner.bak in postgresql to make it same, and to allow to override it and multiple files.
+- [Installation](docs/guides/installer.md) — installer script, manual build,
+  PATH and troubleshooting
+- [DSL reference](docs/guides/dsl.md) — every config key, hook and global
+- [CLI reference](docs/guides/cli.md) — commands, flags, database admin
+- [CLI usage for `thor dl` users](docs/guides/cli-usage.md) — old command →
+  new command mapping
+- [Converting `dl.thor` to `dl.js`](docs/guides/thor-to-js-conversion.md) —
+  complete conversion guide
+- [Operations and troubleshooting](docs/guides/operations.md) — SSH, Compose
+  resolution, backup, security, tests
+- [Migrating from dl.thor](docs/guides/migration-from-thor.md) — short method
+  mapping and transition plan
+- [Dependencies and design](docs/guides/dependencies-and-design.md) — crate
+  choices, licensing and rejected alternatives
+- [Ruby/Thor README](docs/ruby-readme.md) — legacy implementation
 
-### 0.9.0
+## Design
 
-- Add option to rsync to allow sync one file (thx @AnatolyShirykalov)
-- Add env_database to allow overriding database env (thx @Yarroo)
+```text
+dl.js (QuickJS)
+   │  config + hooks + optional execute()
+   ▼
+cloner
+   ├─ SSH (russh) ── remote compose/env, pg_dump/mysqldump/mongodump
+   ├─ SFTP (russh-sftp) ── dump download + incremental file sync
+   ├─ local compose exec ── reset + restore
+   └─ hooks ── shell(), db.query(), clone_db(), clone_files(), ...
+```
 
-### 0.8.0
+The DSL is evaluated before any action. A user-supplied `execute()` replaces
+the default `clone_db()` + `clone_files()` pipeline, which makes the tool
+usable for custom maintenance/backup workflows without forking it.
 
-- Change default rsync flags - -z to -zz to support newer versions of rsync
-- Allow overriding rsync flags via ```rsync_flags``` and ```rsync_compression```
+## License
 
-### 0.7.0
-
-- Add thor file generators
-
-### 0.6.0
-
-- Support MySQL
-
-## Contributing
-
-1. Fork it ( https://github.com/[my-github-username]/cloner/fork )
-2. Create your feature branch (`git checkout -b my-new-feature`)
-3. Commit your changes (`git commit -am 'Add some feature'`)
-4. Push to the branch (`git push origin my-new-feature`)
-5. Create a new Pull Request
+MIT. Third-party crates keep their own licenses; see `Cargo.toml` and the
+upstream projects. `rustic` is not a dependency of this tool.

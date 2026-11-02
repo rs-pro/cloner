@@ -3,10 +3,10 @@
 `cloner` is a single Rust binary. There is no Ruby gem, Bundler, Node.js
 runtime, `thor`, `ssh`, `rsync` or `scp` dependency at runtime.
 
-The installer in [`rust/install.sh`](../../install.sh) installs the C/Rust build
+The installer in [`install.sh`](../../install.sh) installs the C/Rust build
 toolchain if needed, builds the release binary, and copies it to
 `~/.local/bin/cloner` (or another prefix). On Windows the equivalent script is
-[`rust/install.ps1`](../../install.ps1), which installs the Visual Studio C++
+[`install.ps1`](../../install.ps1), which installs the Visual Studio C++
 Build Tools and Rust if needed and copies `cloner.exe` to
 `%USERPROFILE%\.local\bin`.
 
@@ -15,21 +15,17 @@ Build Tools and Rust if needed and copies `cloner.exe` to
 ```bash
 git clone https://github.com/rs-pro/cloner.git
 cd cloner
-./rust/install.sh
+./install.sh
 ```
 
-If the clone does not contain `rust/` yet, switch to the Rust branch first:
-
-```bash
-git checkout rust
-```
+The Rust sources live at the repository root, next to the legacy Ruby gem.
 
 On Windows (PowerShell):
 
 ```powershell
 git clone https://github.com/rs-pro/cloner.git
 cd cloner
-.\rust\install.ps1 -AddToPath
+.\install.ps1 -AddToPath
 ```
 
 After installation:
@@ -52,7 +48,7 @@ user; without it, add the printed line to your PowerShell profile.
 ## Installer options
 
 ```text
-./rust/install.sh [OPTIONS]
+./install.sh [OPTIONS]
 
   --prefix DIR     Install into DIR/bin (default: ~/.local/bin)
   --system         Install into /usr/local/bin using sudo
@@ -64,7 +60,7 @@ user; without it, add the printed line to your PowerShell profile.
 ```
 
 ```text
-.\rust\install.ps1 [OPTIONS]
+.\install.ps1 [OPTIONS]
 
   -Prefix DIR      Install into DIR\bin (default: %USERPROFILE%\.local)
   -System          Install into %ProgramFiles%\cloner\bin (run elevated)
@@ -81,30 +77,30 @@ Examples:
 
 ```bash
 # Personal install, default
-./rust/install.sh
+./install.sh
 
 # System-wide install
-./rust/install.sh --system
+./install.sh --system
 
 # Custom location
-./rust/install.sh --prefix "$HOME/opt/cloner"
+./install.sh --prefix "$HOME/opt/cloner"
 
 # CI or an already provisioned machine
-./rust/install.sh --no-deps
+./install.sh --no-deps
 
 # Inspect what would happen
-./rust/install.sh --dry-run
+./install.sh --dry-run
 ```
 
 ```powershell
 # Personal install, and put the bin directory on PATH
-.\rust\install.ps1 -AddToPath
+.\install.ps1 -AddToPath
 
 # Custom location, nothing installed for me
-.\rust\install.ps1 -Prefix C:\tools -NoDeps
+.\install.ps1 -Prefix C:\tools -NoDeps
 
 # Inspect what would happen
-.\rust\install.ps1 -DryRun
+.\install.ps1 -DryRun
 ```
 
 Re-running the installer upgrades the binary in place.
@@ -115,7 +111,7 @@ Re-running the installer upgrades the binary in place.
    manager (on Windows: the Visual Studio 2022 C++ Build Tools through
    `winget`, then loads their environment).
 2. Installs Rust via [rustup](https://rustup.rs) if `cargo` is missing.
-3. Runs `cargo build --release --locked` in the `rust/` directory.
+3. Runs `cargo build --release --locked` at the repository root.
 4. Copies `target/release/cloner` to `<prefix>/bin/cloner`
    (`target\release\cloner.exe` to `<prefix>\bin\cloner.exe` on Windows).
 5. Prints a `PATH` hint when needed and verifies `cloner --version`.
@@ -123,11 +119,11 @@ Re-running the installer upgrades the binary in place.
 The Rust toolchain defaults to `stable`. Override it with:
 
 ```bash
-CLONER_RUST_TOOLCHAIN=1.89.0 ./rust/install.sh
+CLONER_RUST_TOOLCHAIN=1.89.0 ./install.sh
 ```
 
 ```powershell
-.\rust\install.ps1 -Toolchain 1.89.0
+.\install.ps1 -Toolchain 1.89.0
 ```
 
 ## Supported platforms
@@ -155,7 +151,7 @@ If you prefer not to run the installer:
 
 ```bash
 git clone https://github.com/rs-pro/cloner.git
-cd cloner/rust
+cd cloner
 
 # Debian/Ubuntu example
 sudo apt-get update
@@ -174,7 +170,7 @@ On Windows, install Rust from <https://rustup.rs> (the default MSVC toolchain
 is fine) and copy the `.exe`:
 
 ```powershell
-cd cloner\rust
+cd cloner
 cargo build --release --locked
 New-Item -ItemType Directory -Force "$env:USERPROFILE\.local\bin" | Out-Null
 Copy-Item target\release\cloner.exe "$env:USERPROFILE\.local\bin\cloner.exe"
@@ -211,13 +207,13 @@ SSH/SFTP are implemented in Rust.
 ```bash
 cd cloner
 git pull
-./rust/install.sh
+./install.sh
 ```
 
 ```powershell
 cd cloner
 git pull
-.\rust\install.ps1
+.\install.ps1
 ```
 
 The binary is replaced atomically by `install`. Check the version with:
@@ -272,7 +268,7 @@ The C toolchain is incomplete. Install `build-essential` (Debian/Ubuntu),
 The MSVC C++ toolchain is missing. Either let the installer add it:
 
 ```powershell
-.\rust\install.ps1
+.\install.ps1
 ```
 
 or install "Desktop development with C++" from
@@ -301,15 +297,15 @@ The installer starts the installer UI. Finish it, then re-run:
 
 ```bash
 xcode-select --install
-./rust/install.sh
+./install.sh
 ```
 
 ### Permission denied when installing system-wide
 
-Use `sudo ./rust/install.sh --system`, or install into the user prefix:
+Use `sudo ./install.sh --system`, or install into the user prefix:
 
 ```bash
-./rust/install.sh --prefix "$HOME/.local"
+./install.sh --prefix "$HOME/.local"
 ```
 
 On Windows, `-System` must run in an elevated PowerShell; otherwise use the
@@ -323,7 +319,7 @@ default user prefix.
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-On Windows, re-run `.\rust\install.ps1 -AddToPath` or add the printed line to
+On Windows, re-run `.\install.ps1 -AddToPath` or add the printed line to
 your PowerShell profile. Then open a new shell.
 
 ### Download is slow or the build machine is offline
@@ -332,7 +328,7 @@ Build on a connected machine, then copy the binary:
 
 ```bash
 cargo build --release --locked
-scp rust/target/release/cloner host:/usr/local/bin/cloner
+scp target/release/cloner host:/usr/local/bin/cloner
 ```
 
 `cloner` is a single executable; no extra files are required.

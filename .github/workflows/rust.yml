@@ -4,11 +4,21 @@ on:
   push:
     branches: ["rust", "master"]
     paths:
-      - "rust/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "src/**"
+      - "tests/**"
+      - "install.sh"
+      - "install.ps1"
       - ".github/workflows/rust.yml"
   pull_request:
     paths:
-      - "rust/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "src/**"
+      - "tests/**"
+      - "install.sh"
+      - "install.ps1"
       - ".github/workflows/rust.yml"
   workflow_dispatch:
 
@@ -28,9 +38,6 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-    defaults:
-      run:
-        working-directory: rust
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -38,7 +45,7 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: rust
+          workspaces: .
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Clippy (warnings are errors)
@@ -53,15 +60,12 @@ jobs:
   msrv:
     name: MSRV 1.89
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: rust
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.89.0
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: rust
+          workspaces: .
           key: msrv
       - name: Check MSRV build
         run: cargo check --all-targets --locked
@@ -70,15 +74,12 @@ jobs:
     name: Release build
     runs-on: ubuntu-latest
     needs: test
-    defaults:
-      run:
-        working-directory: rust
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: rust
+          workspaces: .
       - name: Build
         run: cargo build --release --locked
       - name: Smoke test binary
@@ -90,22 +91,19 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: cloner-x86_64-linux
-          path: rust/target/release/cloner
+          path: target/release/cloner
           if-no-files-found: error
 
   build-windows:
     name: Release build (Windows)
     runs-on: windows-latest
     needs: test
-    defaults:
-      run:
-        working-directory: rust
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: rust
+          workspaces: .
       - name: Build
         run: cargo build --release --locked
       - name: Smoke test binary
@@ -117,5 +115,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: cloner-x86_64-windows
-          path: rust/target/release/cloner.exe
+          path: target/release/cloner.exe
           if-no-files-found: error

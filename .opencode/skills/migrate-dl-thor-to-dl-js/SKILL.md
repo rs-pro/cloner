@@ -10,9 +10,9 @@ description: >
 
 # Migrate `dl.thor` → `dl.js`
 
-Full reference: [`rust/docs/guides/thor-to-js-conversion.md`](../../../rust/docs/guides/thor-to-js-conversion.md).
-Also read [`dsl.md`](../../../rust/docs/guides/dsl.md) and
-[`cli-usage.md`](../../../rust/docs/guides/cli-usage.md) before editing.
+Full reference: [`docs/guides/thor-to-js-conversion.md`](../../../docs/guides/thor-to-js-conversion.md).
+Also read [`dsl.md`](../../../docs/guides/dsl.md) and
+[`cli-usage.md`](../../../docs/guides/cli-usage.md) before editing.
 
 ## Workflow
 

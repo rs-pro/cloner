@@ -1,4 +1,5 @@
 /.bundle/
+/target/
 /.yardoc
 /Gemfile.lock
 /_yardoc/

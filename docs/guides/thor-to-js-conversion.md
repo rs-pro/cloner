@@ -5,7 +5,7 @@ still use the Ruby/Thor `cloner` gem (`bundle exec thor dl`). It covers every
 override used by the generated templates and the real-world `dl.thor` files in
 `chaos-router` and `rtrack-go`, plus the behavioural differences to watch for.
 
-The new tool is the Rust binary in [`rust/`](../../README.md). It reads a normal
+The new tool is the Rust binary at the [repository root](../../README.md). It reads a normal
 JavaScript file, so the conversion is mostly replacing Ruby method overrides
 with config keys and replacing custom `download` code with hooks or `execute()`.
 
