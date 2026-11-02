@@ -9,7 +9,8 @@ use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 
 use crate::config::ResolvedRemote;
-use crate::util::{expand_tilde, home_dir, shq};
+use crate::shell::shq;
+use crate::util::{expand_tilde, home_dir};
 
 pub struct Client {
     strict_host_key_checking: bool,

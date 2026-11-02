@@ -70,6 +70,21 @@ jobs:
       - name: Check MSRV build
         run: cargo check --all-targets --locked
 
+  docker:
+    name: Compose database round trips
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .
+          key: docker
+      - name: PostgreSQL, MariaDB and MongoDB round trips
+        env:
+          CLONER_DOCKER_TESTS: "1"
+        run: cargo test --test docker --locked -- --test-threads=1
+
   build:
     name: Release build
     runs-on: ubuntu-latest

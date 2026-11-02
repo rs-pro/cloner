@@ -7,11 +7,11 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Duration;
 
-use crate::config::{
-    Config, Resolved, ResolvedDb, ResolvedDbConfig, ResolvedFileSpec, detect_service,
-    engine_from_env, infer_db, parse_compose_services,
-};
+use crate::backup::{self, Manifest, ManifestDatabase, ManifestFile, ManifestRemote};
+use crate::compose::{detect_service, engine_from_env, infer_db, parse_compose_services};
+use crate::config::{Config, Resolved, ResolvedDb, ResolvedDbConfig, ResolvedFileSpec};
 use crate::db;
+use crate::k8s::KubernetesTarget;
 use crate::ssh::Ssh;
 use crate::sync::{self, SyncStats};
 use crate::util::{parse_env, read_env_file, resolve_path};
@@ -147,6 +147,9 @@ struct RuntimeState {
     local_env: BTreeMap<String, String>,
     options: RunOptions,
     file_stats: Vec<(String, PathBuf, SyncStats)>,
+    /// Only set for automatically timestamped backup directories; explicit
+    /// `--to` destinations are never pruned without the user asking.
+    backup_prune_root: Option<PathBuf>,
 }
 
 impl RuntimeState {
@@ -247,19 +250,25 @@ pub fn execute(config_path: &Path, options: RunOptions) -> Result<()> {
 
         let mut runtime_state = build_state(&resolved, &handle, options.clone())?;
         if options.mode == RunMode::Backup {
-            let dir = options
-                .backup_dir
-                .clone()
-                .or_else(|| {
-                    resolved
-                        .backup
-                        .destination
-                        .as_deref()
-                        .map(|p| resolve_path(&resolved.project_root, p))
-                })
-                .unwrap_or_else(|| resolved.project_root.join("backups").join(timestamp()));
-            std::fs::create_dir_all(&dir)
-                .with_context(|| format!("create backup directory {}", dir.display()))?;
+            let configured = resolved
+                .backup
+                .destination
+                .as_deref()
+                .map(|p| resolve_path(&resolved.project_root, p));
+            let dir = backup::resolve_backup_dir(
+                options.backup_dir.as_deref(),
+                configured.as_deref(),
+                &resolved.project_root,
+                resolved.backup.keep,
+            )?;
+            backup::prepare_dir(&dir)?;
+            runtime_state.backup_prune_root = if options.backup_dir.is_none()
+                && resolved.backup.keep.is_some_and(|keep| keep > 0)
+            {
+                dir.parent().map(Path::to_path_buf)
+            } else {
+                None
+            };
             runtime_state.options.backup_dir = Some(dir);
         }
         *state.borrow_mut() = Some(runtime_state);
@@ -336,9 +345,41 @@ fn build_state(
     handle: &tokio::runtime::Handle,
     options: RunOptions,
 ) -> Result<RuntimeState> {
+    let mut resolved = resolved.clone();
     let mut ssh = None;
-    let remote_env = if let Some(remote) = &resolved.remote {
-        ssh = Some(handle.block_on(Ssh::connect(remote))?);
+    if let Some(remote) = resolved.remote.clone() {
+        ssh = Some(handle.block_on(Ssh::connect(&remote))?);
+    }
+
+    // Kubernetes pods are ephemeral: resolve a label selector to a concrete
+    // pod once, and read the container environment for database credentials
+    // when the project does not spell them out.
+    let mut local_env = resolved
+        .local
+        .env_file
+        .as_ref()
+        .map(|path| read_env_file(path))
+        .unwrap_or_default();
+    if let Some(kubernetes) = resolved.local.kubernetes.clone() {
+        let kubernetes = resolve_pod(&kubernetes, |command| {
+            let output = crate::shell::run_capture(command, None, &[], None)?;
+            if output.code != 0 {
+                bail!(
+                    "kubectl failed with exit code {}: {}",
+                    output.code,
+                    output.stderr.trim()
+                );
+            }
+            Ok(output.stdout)
+        })?;
+        local_env.extend(read_pod_env(&kubernetes, |command| {
+            crate::shell::run_capture(command, None, &[], None).map(|output| output.stdout)
+        })?);
+        resolved.local.kubernetes = Some(kubernetes);
+    }
+
+    let mut remote_env = BTreeMap::new();
+    if let Some(remote) = resolved.remote.clone() {
         if let Some(env_file) = &remote.env_file {
             match handle.block_on(ssh.as_ref().unwrap().read_file(env_file)) {
                 Ok(content) => {
@@ -346,31 +387,34 @@ fn build_state(
                         "loaded {} remote env values from {env_file}",
                         parse_env(&content).len()
                     );
-                    parse_env(&content)
+                    remote_env = parse_env(&content);
                 }
                 Err(error) => {
                     log::debug!("no remote env file {env_file}: {error:#}");
-                    BTreeMap::new()
                 }
             }
-        } else {
-            BTreeMap::new()
         }
-    } else {
-        BTreeMap::new()
-    };
-
-    let local_env = resolved
-        .local
-        .env_file
-        .as_ref()
-        .map(|path| read_env_file(path))
-        .unwrap_or_default();
+        if let Some(kubernetes) = remote.kubernetes.clone() {
+            let kubernetes = resolve_pod(&kubernetes, |command| {
+                let output = handle.block_on(ssh.as_ref().unwrap().exec(command))?;
+                if output.code != 0 {
+                    bail!("kubectl failed: {}", output.stderr.trim());
+                }
+                Ok(output.stdout)
+            })?;
+            remote_env.extend(read_pod_env(&kubernetes, |command| {
+                Ok(handle.block_on(ssh.as_ref().unwrap().exec(command))?.stdout)
+            })?);
+            if let Some(remote) = resolved.remote.as_mut() {
+                remote.kubernetes = Some(kubernetes);
+            }
+        }
+    }
 
     let (remote_db, local_db) = if let Some(cfg) = &resolved.database {
         let remote_db = match (&resolved.remote, ssh.as_ref()) {
             (Some(remote), Some(ssh)) => Some(resolve_remote_db(
-                resolved,
+                &resolved,
                 remote,
                 ssh,
                 cfg,
@@ -379,14 +423,14 @@ fn build_state(
             )?),
             _ => None,
         };
-        let local_db = Some(resolve_local_db(resolved, cfg, &local_env)?);
+        let local_db = Some(resolve_local_db(&resolved, cfg, &local_env)?);
         (remote_db, local_db)
     } else {
         (None, None)
     };
 
     Ok(RuntimeState {
-        resolved: resolved.clone(),
+        resolved,
         ssh,
         remote_db,
         local_db,
@@ -394,7 +438,48 @@ fn build_state(
         local_env,
         options,
         file_stats: Vec::new(),
+        backup_prune_root: None,
     })
+}
+
+/// Resolve `kubernetes.selector` to a concrete pod name when needed.
+fn resolve_pod(
+    kubernetes: &crate::k8s::KubernetesConfig,
+    run: impl Fn(&str) -> Result<String>,
+) -> Result<crate::k8s::KubernetesConfig> {
+    let mut kubernetes = kubernetes.clone();
+    if kubernetes.pod.as_deref().unwrap_or("").trim().is_empty() {
+        let target = KubernetesTarget::from(kubernetes.clone());
+        let command = target.resolve_pod_command()?;
+        let output = run(&command)?;
+        let pod = output
+            .trim()
+            .lines()
+            .last()
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if pod.is_empty() {
+            anyhow::bail!(
+                "no running pod matched kubernetes.selector {:?}",
+                kubernetes.selector
+            );
+        }
+        log::info!("resolved kubernetes pod {pod}");
+        kubernetes.pod = Some(pod);
+    }
+    Ok(kubernetes)
+}
+
+/// Read `KEY=VALUE` pairs from a container (`kubectl exec ... -- env`).
+fn read_pod_env(
+    kubernetes: &crate::k8s::KubernetesConfig,
+    run: impl Fn(&str) -> Result<String>,
+) -> Result<BTreeMap<String, String>> {
+    let target = KubernetesTarget::from(kubernetes.clone());
+    let command = target.wrap("env", false)?;
+    let output = run(&command)?;
+    Ok(parse_env(&output))
 }
 
 fn resolve_remote_db(
@@ -405,6 +490,19 @@ fn resolve_remote_db(
     handle: &tokio::runtime::Handle,
     app_env: &BTreeMap<String, String>,
 ) -> Result<ResolvedDb> {
+    if remote.kubernetes.is_some() {
+        let engine_hint = cfg.engine.or_else(|| engine_from_env(app_env));
+        return infer_db(
+            engine_hint,
+            &cfg.remote,
+            app_env,
+            None,
+            None,
+            &BTreeMap::new(),
+            true,
+        )
+        .with_context(|| format!("resolve remote database on {}", remote.host));
+    }
     let compose_yaml = match remote.compose_file_path() {
         Some(path) => match handle.block_on(ssh.read_file(&path)) {
             Ok(content) => Some(content),
@@ -456,6 +554,19 @@ fn resolve_local_db(
     cfg: &ResolvedDbConfig,
     app_env: &BTreeMap<String, String>,
 ) -> Result<ResolvedDb> {
+    if resolved.local.kubernetes.is_some() {
+        let engine_hint = cfg.engine.or_else(|| engine_from_env(app_env));
+        return infer_db(
+            engine_hint,
+            &cfg.local,
+            app_env,
+            None,
+            None,
+            &BTreeMap::new(),
+            true,
+        )
+        .with_context(|| "resolve local database");
+    }
     let compose_yaml = resolved
         .local
         .compose
@@ -554,7 +665,7 @@ fn run_database_core<'js>(
 
     let name = db::dump_file_name(remote_db.engine, cfg.dump_name.as_deref());
     let local_dump = if let Some(dir) = &backup_dir {
-        dir.join("dump").join(&name)
+        dir.join(backup::dump_relative_path(&name))
     } else {
         project_root.join("tmp").join("dump").join(&name)
     };
@@ -626,8 +737,7 @@ fn run_files_core<'js>(
         for spec in files {
             let mut spec = spec;
             if let Some(dir) = &backup_dir {
-                let safe = spec.from.trim_start_matches('/').replace(['/', '\\'], "_");
-                spec.to = dir.join("files").join(safe);
+                spec.to = dir.join(backup::files_relative_path(&spec.from));
             }
             let ssh = st.ssh_mut(handle)?;
             let sftp = handle.block_on(ssh.sftp())?;
@@ -650,52 +760,53 @@ fn write_manifest(state: &Rc<RefCell<Option<RuntimeState>>>) -> Result<()> {
         .backup_dir
         .clone()
         .ok_or_else(|| anyhow!("backup directory is not set"))?;
-    let dump = st
-        .resolved
-        .database
-        .as_ref()
-        .zip(st.remote_db.as_ref())
-        .map(|(cfg, db)| {
-            let name = db::dump_file_name(db.engine, cfg.dump_name.as_deref());
-            dir.join("dump").join(name)
-        });
-    let manifest = serde_json::json!({
-        "tool": "cloner",
-        "version": env!("CARGO_PKG_VERSION"),
-        "createdAt": chrono::Utc::now().to_rfc3339(),
-        "config": st.resolved.config_path.display().to_string(),
-        "projectRoot": st.resolved.project_root.display().to_string(),
-        "projectEnv": st.resolved.project_env,
-        "remote": st.resolved.remote.as_ref().map(|r| serde_json::json!({
-            "host": r.host, "user": r.user, "port": r.port, "appPath": r.app_path,
-        })),
-        "database": st.remote_db.as_ref().map(|db| serde_json::json!({
-            "engine": db.engine, "database": db.database, "user": db.user,
-        })),
-        "dump": dump.map(|p| serde_json::json!({
-            "path": p.display().to_string(),
-            "size": std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0),
-            "sha256": crate::util::sha256_file(&p).ok(),
-        })),
-        "files": st.file_stats.iter().map(|(from, to, stats)| serde_json::json!({
-            "from": from,
-            "to": to.display().to_string(),
-            "files": stats.files,
-            "downloaded": stats.downloaded,
-            "skipped": stats.skipped,
-            "deleted": stats.deleted,
-            "bytes": stats.bytes,
-        })).collect::<Vec<_>>(),
-    });
-    let path = dir.join("manifest.json");
-    std::fs::write(&path, serde_json::to_vec_pretty(&manifest)?)
-        .with_context(|| format!("write {}", path.display()))?;
-    log::info!("backup manifest written to {}", path.display());
-    Ok(())
-}
 
-fn timestamp() -> String {
-    chrono::Local::now().format("%Y%m%d-%H%M%S").to_string()
+    let mut manifest = Manifest::new(
+        st.resolved.config_path.display().to_string(),
+        st.resolved.project_root.display().to_string(),
+        st.resolved.project_env.clone(),
+    );
+    manifest.remote = st.resolved.remote.as_ref().map(|remote| ManifestRemote {
+        host: remote.host.clone(),
+        user: remote.user.clone(),
+        port: remote.port,
+        app_path: remote.app_path.clone(),
+    });
+    manifest.database = st.remote_db.as_ref().map(|db| ManifestDatabase {
+        engine: db.engine.as_str().to_string(),
+        database: db.database.clone(),
+        user: db.user.clone(),
+    });
+    if let Some((cfg, db)) = st.resolved.database.as_ref().zip(st.remote_db.as_ref()) {
+        let path = dir.join(backup::dump_relative_path(
+            &db.dump_file_name(cfg.dump_name.as_deref()),
+        ));
+        if path.exists() {
+            manifest.set_dump(&path)?;
+        }
+    }
+    manifest.files = st
+        .file_stats
+        .iter()
+        .map(|(from, to, stats)| ManifestFile {
+            from: from.clone(),
+            to: to.display().to_string(),
+            files: stats.files,
+            downloaded: stats.downloaded,
+            skipped: stats.skipped,
+            deleted: stats.deleted,
+            bytes: stats.bytes,
+        })
+        .collect();
+    manifest.write(&dir)?;
+
+    if let (Some(keep), Some(root)) = (st.resolved.backup.keep, st.backup_prune_root.as_deref()) {
+        let plan = backup::prune(root, keep)?;
+        if !plan.removed.is_empty() {
+            log::info!("retention removed {} old backup(s)", plan.removed.len());
+        }
+    }
+    Ok(())
 }
 
 fn call_hook<'js>(ctx: &Ctx<'js>, exports: &Object<'js>, name: &str) -> Result<()> {
@@ -1096,7 +1207,11 @@ fn install_globals(
                     .compose
                     .as_ref()
                     .ok_or_else(|| js_error("local compose is not configured"))?;
-                let command = format!("{} {}", db::compose_prefix(compose), args.0.join(" "));
+                let command = format!(
+                    "{} {}",
+                    crate::runtime::compose_prefix(&compose.path, &compose.file),
+                    args.0.join(" ")
+                );
                 let output = db::run_local_capture(&command, None, &[], None)
                     .map_err(|e| js_error(format!("{e:#}")))?;
                 if output.code != 0 {
@@ -1127,7 +1242,11 @@ fn install_globals(
                     .and_then(|r| r.compose.as_ref())
                     .ok_or_else(|| js_error("remote compose is not configured"))?
                     .clone();
-                let command = format!("{} {}", db::compose_prefix(&compose), args.0.join(" "));
+                let command = format!(
+                    "{} {}",
+                    crate::runtime::compose_prefix(&compose.path, &compose.file),
+                    args.0.join(" ")
+                );
                 let ssh = st.ssh_mut(&handle).map_err(js_error)?;
                 let output = handle
                     .block_on(ssh.exec(&command))

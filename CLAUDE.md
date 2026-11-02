@@ -8,9 +8,12 @@ Cloner clones production databases and files into local development or staging
 environments. It supports MongoDB, PostgreSQL, and MySQL.
 
 The main implementation is the Rust single binary at the repository root. It
-uses a JavaScript DSL (`dl.js`), SSH/SFTP file sync, Compose/`.env` resolution,
-backup mode, and `pg_dev`-style `cloner db create/reset/drop/migrate/seed`
-commands. Build and test it with:
+uses a JavaScript DSL (`dl.js`), SSH/SFTP file sync, Compose/`.env` or
+Kubernetes pod resolution, backup mode with retention, `cloner k8s cronjob`
+manifest generation, and `pg_dev`-style
+`cloner db create/reset/drop/migrate/seed` commands. The reusable modules live
+in `src/lib.rs` (`engine`, `runtime`, `compose`, `backup`, `k8s`, `shell`) so
+backup tooling can use them without the DSL or SSH. Build and test it with:
 
 ```bash
 cargo build --release
@@ -40,6 +43,7 @@ cloner init
 cloner validate
 cloner run
 cloner backup --to /var/backups/myapp
+cloner k8s cronjob --bucket yc:my-bucket/postgres
 
 # Legacy Ruby/Thor: install dependencies
 bundle install

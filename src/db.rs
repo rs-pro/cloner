@@ -1,134 +1,47 @@
-use anyhow::{Context, Result, anyhow, bail};
+//! Database dump, restore, reset and query operations.
+//!
+//! Command strings are built by [`crate::engine`] and wrapped by
+//! [`crate::runtime`], so the same code path works for a host, a Compose
+//! service or a Kubernetes pod.
+
+use anyhow::{Result, anyhow, bail};
 use std::path::Path;
-use std::process::{Command, Stdio};
 
-use crate::config::{Engine, ResolvedCompose, ResolvedDb, ResolvedDbConfig, ResolvedLocal};
+use crate::config::{ResolvedDbConfig, ResolvedLocal, ResolvedRemote};
+use crate::engine::{Engine, ResolvedDb};
+use crate::runtime::CommandTarget;
+use crate::shell::{self, LocalCmdOutput, shq};
 use crate::ssh::Ssh;
-use crate::util::{human_size, shq};
+use crate::util::human_size;
 
-#[derive(Debug, Clone)]
-pub struct LocalCmdOutput {
-    pub stdout: String,
-    pub stderr: String,
-    pub code: i32,
-}
-
-pub fn compose_prefix(compose: &ResolvedCompose) -> String {
-    format!(
-        "cd {} && docker compose -f {}",
-        shq(&compose.path),
-        shq(&compose.file)
-    )
-}
-
-/// MariaDB images ship `mariadb`/`mariadb-dump`/`mariadb-admin` instead of the
-/// MySQL-named tools. Use the MySQL name when present, otherwise the MariaDB
-/// name, without requiring the caller to know which image is running.
-pub fn mysql_shell(primary: &str, fallback: &str, args: &[String]) -> String {
-    format!(
-        "sh -lc 'if command -v {primary} >/dev/null 2>&1; then exec {primary} \"$@\"; else exec {fallback} \"$@\"; fi' sh {}",
-        args.join(" ")
-    )
-}
-
-fn compose_prefix_local(compose: &ResolvedCompose) -> String {
-    compose_prefix(compose)
-}
+pub use crate::engine::mysql_shell;
 
 pub fn dump_file_name(engine: Engine, custom: Option<&str>) -> String {
-    if let Some(name) = custom {
-        return name.to_string();
-    }
-    match engine {
-        Engine::Postgres => "cloner.bak".to_string(),
-        Engine::Mysql => "cloner.sql".to_string(),
-        Engine::Mongo => "cloner.archive".to_string(),
-    }
+    custom
+        .map(str::to_string)
+        .unwrap_or_else(|| engine.default_dump_file().to_string())
 }
 
+/// Dump a database on the remote host, container or pod to a temporary file
+/// and return that remote path.
 pub async fn dump_remote(
     ssh: &Ssh,
-    remote: &crate::config::ResolvedRemote,
+    remote: &ResolvedRemote,
     cfg: &ResolvedDbConfig,
     db: &ResolvedDb,
     dry_run: bool,
 ) -> Result<String> {
-    let name = dump_file_name(db.engine, cfg.dump_name.as_deref());
+    let name = db.dump_file_name(cfg.dump_name.as_deref());
     let dump_path = cfg
         .remote_dump_path
         .clone()
         .unwrap_or_else(|| remote.dump_path.clone());
     let remote_file = format!("{}/{}", dump_path.trim_end_matches('/'), name);
 
-    let compose = remote.compose.as_ref();
+    let target = remote.command_target();
     let service = db.service.as_deref().or(cfg.remote_service.as_deref());
-
-    let mut args: Vec<String> = cfg.dump_args.clone();
-    if args.is_empty() {
-        args = match db.engine {
-            Engine::Postgres => vec!["-Fc".to_string()],
-            Engine::Mysql => vec!["--add-drop-table".into(), "--single-transaction".into()],
-            Engine::Mongo => vec!["--archive".into()],
-        };
-    }
-
-    let inner = match db.engine {
-        Engine::Postgres => {
-            let mut parts = vec!["pg_dump".to_string()];
-            parts.extend(args);
-            parts.push("-U".into());
-            parts.push(shq(&db.user));
-            parts.push("-h".into());
-            parts.push(shq(&db.host));
-            parts.push("-p".into());
-            parts.push(shq(&db.port.to_string()));
-            parts.push(shq(&db.database));
-            if db.password.is_empty() {
-                parts.join(" ")
-            } else {
-                format!("env PGPASSWORD={} {}", shq(&db.password), parts.join(" "))
-            }
-        }
-        Engine::Mysql => {
-            let mut parts = args;
-            parts.push("--user".into());
-            parts.push(shq(&db.user));
-            if !db.password.is_empty() {
-                parts.push(format!("--password={}", shq(&db.password)));
-            }
-            parts.push("--host".into());
-            parts.push(shq(&db.host));
-            parts.push("--port".into());
-            parts.push(shq(&db.port.to_string()));
-            parts.push(shq(&db.database));
-            mysql_shell("mysqldump", "mariadb-dump", &parts)
-        }
-        Engine::Mongo => {
-            let uri = if db.user.is_empty() {
-                format!("mongodb://{}:{}/{}", db.host, db.port, db.database)
-            } else {
-                format!(
-                    "mongodb://{}:{}@{}:{}/{}?authSource=admin",
-                    db.user, db.password, db.host, db.port, db.database
-                )
-            };
-            format!("mongodump --uri {} --archive", shq(&uri))
-        }
-    };
-
-    let body = if let Some(compose) = compose {
-        let service = service.ok_or_else(|| {
-            anyhow!("remote compose is configured but no database service was resolved")
-        })?;
-        format!(
-            "{} exec -T {} {}",
-            compose_prefix(compose),
-            shq(service),
-            inner
-        )
-    } else {
-        inner
-    };
+    let inner = db.dump_command(&cfg.dump_args);
+    let body = target.wrap(service, &inner)?;
 
     let command = format!(
         "mkdir -p {dump} && rm -f {file} && ({body}) > {file} && test -s {file} && wc -c < {file}",
@@ -137,10 +50,11 @@ pub async fn dump_remote(
         body = body,
     );
     log::info!(
-        "dumping {} database {} on {}",
+        "dumping {} database {} on {} ({})",
         db.engine.as_str(),
         db.database,
-        remote.host
+        remote.host,
+        target.kind()
     );
     if dry_run {
         println!("DRY RUN remote: {command}");
@@ -153,6 +67,53 @@ pub async fn dump_remote(
     }
     log::info!("remote dump ready: {} ({})", remote_file, human_size(size));
     Ok(remote_file)
+}
+
+/// Dump a database to a local file, using a host/Compose/Kubernetes target.
+///
+/// This is the entry point reusable by backup tooling: no SSH is involved.
+pub fn dump_to_path(
+    target: &CommandTarget,
+    service: Option<&str>,
+    db: &ResolvedDb,
+    dump_args: &[String],
+    destination: &Path,
+    dry_run: bool,
+) -> Result<u64> {
+    let inner = db.dump_command(dump_args);
+    let body = target.wrap(service, &inner)?;
+    let parent = destination
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| Path::new(".").to_path_buf());
+    let file = destination.to_string_lossy();
+    let command = format!(
+        "mkdir -p {parent} && rm -f {file} && ({body}) > {file} && test -s {file} && wc -c < {file}",
+        parent = shq(&parent.to_string_lossy()),
+        file = shq(&file),
+    );
+    log::info!(
+        "dumping {} database {} via {} to {}",
+        db.engine.as_str(),
+        db.database,
+        target.kind(),
+        destination.display()
+    );
+    if dry_run {
+        println!("DRY RUN local: {command}");
+        return Ok(0);
+    }
+    let output = shell::run(&command, None, &[], None, false)?;
+    let size = output.stdout.trim().parse::<u64>().unwrap_or(0);
+    if size == 0 {
+        bail!("dump {} is empty", destination.display());
+    }
+    log::info!(
+        "dump ready: {} ({})",
+        destination.display(),
+        human_size(size)
+    );
+    Ok(size)
 }
 
 pub async fn fetch_dump(
@@ -188,85 +149,22 @@ pub fn restore_local(
     dump_file: &Path,
     dry_run: bool,
 ) -> Result<()> {
-    let compose = local.compose.as_ref();
+    let target = local.command_target();
     let service = cfg.local_service.as_deref().or(db.service.as_deref());
-
-    let mut restore_args: Vec<String> = cfg.restore_args.clone();
-    if restore_args.is_empty() {
-        restore_args = match db.engine {
-            Engine::Postgres => vec![
-                "--no-owner".into(),
-                "-Fc".into(),
-                "-c".into(),
-                "--if-exists".into(),
-            ],
-            Engine::Mysql => vec![],
-            Engine::Mongo => vec!["--archive".into(), "--drop".into()],
-        };
-    }
-
-    let inner = match db.engine {
-        Engine::Postgres => {
-            let mut parts = vec!["pg_restore".to_string()];
-            parts.extend(restore_args);
-            parts.push("-U".into());
-            parts.push(shq(&db.user));
-            parts.push("-h".into());
-            parts.push(shq(&db.host));
-            parts.push("-p".into());
-            parts.push(shq(&db.port.to_string()));
-            parts.push("-d".into());
-            parts.push(shq(&db.database));
-            if db.password.is_empty() {
-                parts.join(" ")
-            } else {
-                format!("env PGPASSWORD={} {}", shq(&db.password), parts.join(" "))
-            }
-        }
-        Engine::Mysql => {
-            let mut parts = restore_args;
-            parts.push("--user".into());
-            parts.push(shq(&db.user));
-            if !db.password.is_empty() {
-                parts.push(format!("--password={}", shq(&db.password)));
-            }
-            parts.push("--host".into());
-            parts.push(shq(&db.host));
-            parts.push("--port".into());
-            parts.push(shq(&db.port.to_string()));
-            parts.push(shq(&db.database));
-            mysql_shell("mysql", "mariadb", &parts)
-        }
-        Engine::Mongo => {
-            let mut parts = vec!["mongorestore".to_string()];
-            parts.extend(restore_args);
-            parts.push("--nsInclude".into());
-            parts.push(shq(&format!("{}.*", db.database)));
-            parts.join(" ")
-        }
-    };
-
-    let command = if let Some(compose) = compose {
-        let service = service.ok_or_else(|| {
-            anyhow!("local compose is configured but no database service was resolved")
-        })?;
-        format!(
-            "{} exec -T {} {} < {}",
-            compose_prefix_local(compose),
-            shq(service),
-            inner,
-            shq(&dump_file.to_string_lossy())
-        )
-    } else {
-        format!("{} < {}", inner, shq(&dump_file.to_string_lossy()))
-    };
+    let inner = db.restore_command(&cfg.restore_args);
+    let command = format!(
+        "{} < {}",
+        target.wrap_stdin(service, &inner)?,
+        shq(&dump_file.to_string_lossy())
+    );
 
     log::info!(
-        "restoring {} database {} locally",
+        "restoring {} database {} locally via {}",
         db.engine.as_str(),
-        db.database
+        db.database,
+        target.kind()
     );
-    run_local(&command, None, &[], None, dry_run).map(|_| ())
+    shell::run(&command, None, &[], None, dry_run).map(|_| ())
 }
 
 pub fn reset_local(
@@ -289,12 +187,12 @@ fn drop_create(local: &ResolvedLocal, db: &ResolvedDb, dry_run: bool) -> Result<
         db.engine.as_str(),
         db.database
     );
-    let compose = local.compose.as_ref();
-    if let Some(compose) = compose {
+    let target = local.command_target();
+    if let Some(prefix) = target.compose_prefix() {
         let service = db.service.as_deref().unwrap_or("db");
         log::info!("starting local compose service {service}");
-        run_local(
-            &format!("{} up -d {}", compose_prefix_local(compose), shq(service)),
+        shell::run(
+            &format!("{} up -d {}", prefix, shq(service)),
             None,
             &[],
             None,
@@ -302,75 +200,8 @@ fn drop_create(local: &ResolvedLocal, db: &ResolvedDb, dry_run: bool) -> Result<
         )?;
         wait_ready(local, db, dry_run)?;
     }
-    match db.engine {
-        Engine::Postgres => {
-            let script = "dropdb --if-exists --force \"$PGDATABASE\" && createdb \"$PGDATABASE\"";
-            let command = if let Some(compose) = compose {
-                format!(
-                    "{} exec -T {} env PGHOST={} PGPORT={} PGUSER={} PGDATABASE={} PGPASSWORD={} sh -eu -c {}",
-                    compose_prefix_local(compose),
-                    shq(db.service.as_deref().unwrap_or("db")),
-                    shq(&db.host),
-                    shq(&db.port.to_string()),
-                    shq(&db.user),
-                    shq(&db.database),
-                    shq(&db.password),
-                    shq(script)
-                )
-            } else {
-                format!(
-                    "PGHOST={} PGPORT={} PGUSER={} PGDATABASE={} PGPASSWORD={} sh -eu -c {}",
-                    shq(&db.host),
-                    shq(&db.port.to_string()),
-                    shq(&db.user),
-                    shq(&db.database),
-                    shq(&db.password),
-                    shq(script)
-                )
-            };
-            run_local(&command, None, &[], None, dry_run).map(|_| ())
-        }
-        Engine::Mysql => {
-            let ident = db.database.replace('`', "``");
-            let script = format!("DROP DATABASE IF EXISTS `{ident}`; CREATE DATABASE `{ident}`;");
-            let args = vec![
-                format!("--user={}", shq(&db.user)),
-                format!("--password={}", shq(&db.password)),
-                format!("--host={}", shq(&db.host)),
-                format!("--port={}", shq(&db.port.to_string())),
-                format!("-e {}", shq(&script)),
-            ];
-            let client = mysql_shell("mysql", "mariadb", &args);
-            let command = if let Some(compose) = compose {
-                format!(
-                    "{} exec -T {} {}",
-                    compose_prefix_local(compose),
-                    shq(db.service.as_deref().unwrap_or("db")),
-                    client
-                )
-            } else {
-                client
-            };
-            run_local(&command, None, &[], None, dry_run).map(|_| ())
-        }
-        Engine::Mongo => {
-            let script = format!(
-                "db.getSiblingDB({}).dropDatabase()",
-                serde_json::to_string(&db.database)?
-            );
-            let command = if let Some(compose) = compose {
-                format!(
-                    "{} exec -T {} mongosh --quiet --eval {}",
-                    compose_prefix_local(compose),
-                    shq(db.service.as_deref().unwrap_or("db")),
-                    shq(&script)
-                )
-            } else {
-                format!("mongosh --quiet --eval {}", shq(&script))
-            };
-            run_local(&command, None, &[], None, dry_run).map(|_| ())
-        }
-    }
+    let command = target.wrap(db.service.as_deref(), &db.drop_create_command())?;
+    shell::run(&command, None, &[], None, dry_run).map(|_| ())
 }
 
 fn volume_reset(
@@ -389,22 +220,17 @@ fn volume_reset(
         .as_ref()
         .ok_or_else(|| anyhow!("reset: volume requires database.volume"))?;
     log::info!("resetting local database volume {volume}");
+    let prefix = crate::runtime::compose_prefix(&compose.path, &compose.file);
 
-    run_local(
-        &format!("{} down", compose_prefix_local(compose)),
-        None,
-        &[],
-        None,
-        dry_run,
-    )?;
-    run_local(
+    shell::run(&format!("{prefix} down"), None, &[], None, dry_run)?;
+    shell::run(
         &format!("docker volume rm -f {}", shq(volume)),
         None,
         &[],
         None,
         dry_run,
     )?;
-    run_local(
+    shell::run(
         &format!("docker volume create {}", shq(volume)),
         None,
         &[],
@@ -414,13 +240,7 @@ fn volume_reset(
     // Match the original cloner behavior: after recreating the volume, bring
     // the whole compose project up (not just the DB), because migrations and
     // the app may need search/redis/etc. too.
-    run_local(
-        &format!("{} up -d", compose_prefix_local(compose)),
-        None,
-        &[],
-        None,
-        dry_run,
-    )?;
+    shell::run(&format!("{prefix} up -d"), None, &[], None, dry_run)?;
     wait_ready(local, db, dry_run)
 }
 
@@ -428,62 +248,10 @@ pub fn wait_ready(local: &ResolvedLocal, db: &ResolvedDb, dry_run: bool) -> Resu
     if dry_run {
         return Ok(());
     }
-    let compose = local.compose.as_ref();
-    let service = db.service.as_deref().unwrap_or("db");
+    let target = local.command_target();
+    let check = target.wrap(db.service.as_deref(), &db.ping_command())?;
     for attempt in 1..=60 {
-        let check = match (db.engine, compose) {
-            (Engine::Postgres, Some(compose)) => format!(
-                "{} exec -T {} pg_isready -U {} -d {}",
-                compose_prefix_local(compose),
-                shq(service),
-                shq(&db.user),
-                shq(&db.database)
-            ),
-            (Engine::Postgres, None) => format!(
-                "pg_isready -h {} -p {} -U {} -d {}",
-                shq(&db.host),
-                shq(&db.port.to_string()),
-                shq(&db.user),
-                shq(&db.database)
-            ),
-            (Engine::Mysql, Some(compose)) => format!(
-                "{} exec -T {} {}",
-                compose_prefix_local(compose),
-                shq(service),
-                mysql_shell(
-                    "mysqladmin",
-                    "mariadb-admin",
-                    &[
-                        "ping".to_string(),
-                        format!("--user={}", shq(&db.user)),
-                        format!("--password={}", shq(&db.password)),
-                        format!("--host={}", shq(&db.host)),
-                    ]
-                )
-            ),
-            (Engine::Mysql, None) => mysql_shell(
-                "mysqladmin",
-                "mariadb-admin",
-                &[
-                    "ping".to_string(),
-                    format!("--user={}", shq(&db.user)),
-                    format!("--password={}", shq(&db.password)),
-                    format!("--host={}", shq(&db.host)),
-                    format!("--port={}", shq(&db.port.to_string())),
-                ],
-            ),
-            (Engine::Mongo, Some(compose)) => format!(
-                "{} exec -T {} mongosh --quiet --eval 'db.runCommand({{ping:1}}).ok'",
-                compose_prefix_local(compose),
-                shq(service)
-            ),
-            (Engine::Mongo, None) => format!(
-                "mongosh --quiet --host {} --port {} --eval 'db.runCommand({{ping:1}}).ok'",
-                shq(&db.host),
-                shq(&db.port.to_string())
-            ),
-        };
-        if run_local(&check, None, &[], None, false).is_ok() {
+        if shell::run(&check, None, &[], None, false).is_ok() {
             log::info!("local database is ready");
             return Ok(());
         }
@@ -499,105 +267,23 @@ pub fn query_local(
     sql: &str,
     dry_run: bool,
 ) -> Result<String> {
-    let compose = local.compose.as_ref();
-    let command = match db.engine {
-        Engine::Postgres => {
-            let inner = format!(
-                "env PGPASSWORD={} psql -v ON_ERROR_STOP=1 -U {} -h {} -p {} -d {} -c {}",
-                shq(&db.password),
-                shq(&db.user),
-                shq(&db.host),
-                shq(&db.port.to_string()),
-                shq(&db.database),
-                shq(sql)
-            );
-            if let Some(compose) = compose {
-                format!(
-                    "{} exec -T {} {}",
-                    compose_prefix_local(compose),
-                    shq(db.service.as_deref().unwrap_or("db")),
-                    inner
-                )
-            } else {
-                inner
-            }
-        }
-        Engine::Mysql => {
-            let inner = mysql_shell(
-                "mysql",
-                "mariadb",
-                &[
-                    format!("--user={}", shq(&db.user)),
-                    format!("--password={}", shq(&db.password)),
-                    format!("--host={}", shq(&db.host)),
-                    format!("--port={}", shq(&db.port.to_string())),
-                    shq(&db.database),
-                    format!("-e {}", shq(sql)),
-                ],
-            );
-            if let Some(compose) = compose {
-                format!(
-                    "{} exec -T {} {}",
-                    compose_prefix_local(compose),
-                    shq(db.service.as_deref().unwrap_or("db")),
-                    inner
-                )
-            } else {
-                inner
-            }
-        }
-        Engine::Mongo => {
-            let script = format!(
-                "db.getSiblingDB({}).runCommand({{ ping: 1 }})",
-                serde_json::to_string(&db.database)?
-            );
-            let inner = format!("mongosh --quiet --eval {}", shq(&script));
-            if let Some(compose) = compose {
-                format!(
-                    "{} exec -T {} {}",
-                    compose_prefix_local(compose),
-                    shq(db.service.as_deref().unwrap_or("db")),
-                    inner
-                )
-            } else {
-                inner
-            }
-        }
-    };
-    let output = run_local(&command, None, &[], None, dry_run)?;
+    let target = local.command_target();
+    let command = target.wrap(db.service.as_deref(), &db.query_command(sql))?;
+    let output = shell::run(&command, None, &[], None, dry_run)?;
     Ok(output.stdout)
 }
 
+/// Capture a local command without failing on a non-zero exit code.
 pub fn run_local_capture(
     command: &str,
     cwd: Option<&Path>,
     envs: &[(String, String)],
     stdin_path: Option<&Path>,
 ) -> Result<LocalCmdOutput> {
-    let shell = crate::util::local_shell()?;
-    let mut process = Command::new(&shell.program);
-    process.arg("-c").arg(command);
-    if let Some(cwd) = cwd {
-        process.current_dir(cwd);
-    }
-    for (key, value) in envs {
-        process.env(key, value);
-    }
-    if let Some(stdin_path) = stdin_path {
-        let file = std::fs::File::open(stdin_path)
-            .with_context(|| format!("open stdin {}", stdin_path.display()))?;
-        process.stdin(Stdio::from(file));
-    }
-    let output = process
-        .output()
-        .with_context(|| format!("run local command: {command}"))?;
-    Ok(LocalCmdOutput {
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-        code: output.status.code().unwrap_or(-1),
-    })
+    shell::run_capture(command, cwd, envs, stdin_path)
 }
 
+/// Run a local command, treating a non-zero exit code as an error.
 pub fn run_local(
     command: &str,
     cwd: Option<&Path>,
@@ -605,45 +291,53 @@ pub fn run_local(
     stdin_path: Option<&Path>,
     dry_run: bool,
 ) -> Result<LocalCmdOutput> {
-    log::debug!("local: {command}");
-    if dry_run {
-        println!("DRY RUN local: {command}");
-        return Ok(LocalCmdOutput {
-            stdout: String::new(),
-            stderr: String::new(),
-            code: 0,
-        });
-    }
-    let result = run_local_capture(command, cwd, envs, stdin_path)?;
-    if result.code != 0 {
-        let detail = if !result.stderr.trim().is_empty() {
-            result.stderr.trim()
-        } else {
-            result.stdout.trim()
-        };
-        bail!(
-            "local command failed with exit code {}: {command}\n{}",
-            result.code,
-            tail(detail, 4000)
-        );
-    }
-    Ok(result)
-}
-
-fn tail(value: &str, limit: usize) -> &str {
-    if value.len() <= limit {
-        return value;
-    }
-    let mut start = value.len() - limit;
-    while !value.is_char_boundary(start) {
-        start += 1;
-    }
-    &value[start..]
+    shell::run(command, cwd, envs, stdin_path, dry_run)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn db(engine: Engine) -> ResolvedDb {
+        ResolvedDb {
+            engine,
+            host: "localhost".into(),
+            port: engine.default_port(),
+            database: "app_development".into(),
+            user: "app".into(),
+            password: "secret".into(),
+            service: Some("db".into()),
+            in_container: true,
+        }
+    }
+
+    fn local(compose: bool) -> ResolvedLocal {
+        ResolvedLocal {
+            compose: compose.then(|| crate::config::ResolvedCompose {
+                path: "/project".into(),
+                file: "compose.yml".into(),
+                service: Some("db".into()),
+            }),
+            env_file: None,
+            kubernetes: None,
+        }
+    }
+
+    fn cfg() -> ResolvedDbConfig {
+        ResolvedDbConfig {
+            engine: Some(Engine::Postgres),
+            remote: Default::default(),
+            local: Default::default(),
+            remote_service: None,
+            local_service: None,
+            reset: crate::config::ResetMode::DropCreate,
+            volume: None,
+            dump_name: None,
+            dump_args: Vec::new(),
+            restore_args: Vec::new(),
+            remote_dump_path: None,
+        }
+    }
 
     #[test]
     fn chooses_dump_file_names() {
@@ -657,19 +351,6 @@ mod tests {
     }
 
     #[test]
-    fn builds_compose_prefix_with_quoting() {
-        let compose = ResolvedCompose {
-            path: "/srv/my app".into(),
-            file: "compose.yml".into(),
-            service: None,
-        };
-        assert_eq!(
-            compose_prefix(&compose),
-            "cd '/srv/my app' && docker compose -f compose.yml"
-        );
-    }
-
-    #[test]
     fn builds_mysql_shell_with_mariadb_fallback() {
         let command = mysql_shell(
             "mysql",
@@ -679,6 +360,62 @@ mod tests {
         assert!(command.starts_with("sh -lc 'if command -v mysql"));
         assert!(command.contains("else exec mariadb \"$@\""));
         assert!(command.ends_with("sh --user=app -e 'SELECT 1'"));
+    }
+
+    #[test]
+    fn dump_to_path_uses_the_command_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let dump = dir.path().join("dump/cloner.bak");
+        // Dry run prints the composed command but does not create the file.
+        dump_to_path(
+            &CommandTarget::compose("/project", "compose.yml"),
+            Some("db"),
+            &db(Engine::Postgres),
+            &[],
+            &dump,
+            true,
+        )
+        .unwrap();
+        assert!(!dump.exists());
+    }
+
+    #[test]
+    fn reset_without_reset_mode_is_a_noop() {
+        let mut cfg = cfg();
+        cfg.reset = crate::config::ResetMode::None;
+        reset_local(
+            &local(false),
+            &cfg,
+            &db(Engine::Postgres),
+            Path::new("/project"),
+            true,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn volume_reset_requires_compose_and_a_volume() {
+        let mut cfg = cfg();
+        cfg.reset = crate::config::ResetMode::Volume;
+        let error = reset_local(
+            &local(false),
+            &cfg,
+            &db(Engine::Postgres),
+            Path::new("/project"),
+            true,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("local.compose"));
+
+        let error = reset_local(
+            &local(true),
+            &cfg,
+            &db(Engine::Postgres),
+            Path::new("/project"),
+            true,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("database.volume"));
     }
 
     #[test]
@@ -726,12 +463,5 @@ mod tests {
         assert!(text.contains("exit code 3"));
         assert!(text.contains("boom"));
         assert!(text.contains("echo boom"));
-    }
-
-    #[test]
-    fn tail_keeps_utf8_boundaries() {
-        assert_eq!(tail("short", 100), "short");
-        assert_eq!(tail("abcdef", 3), "def");
-        assert_eq!(tail("русский", 8), "ский");
     }
 }

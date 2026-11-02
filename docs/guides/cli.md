@@ -49,7 +49,9 @@ Writes:
 └── manifest.json
 ```
 
-The backup action does not reset or restore the local database.
+The backup action does not reset or restore the local database. The manifest
+records the dump size and SHA-256; with `backup.keep` set, timestamped backups
+under `backup.destination` are pruned to the newest `keep` runs.
 
 | Option | Meaning |
 |---|---|
@@ -58,6 +60,70 @@ The backup action does not reset or restore the local database.
 | `-F, --skip-files` | Skip file sync |
 | `--dry-run` | Print commands only |
 | `--from <NAME>` | Environment name exposed as `CLONE_FROM` |
+
+## `restore`
+
+Restore a stored backup instead of dumping production again:
+
+```bash
+cloner restore --from /var/backups/myapp
+cloner restore --from /var/backups/myapp/dump/cloner.bak --no-reset
+cloner restore --from /var/backups/myapp --dry-run
+```
+
+`--from` accepts a backup directory containing `manifest.json` or a dump file.
+The local database comes from the DSL. The dump is verified against the
+manifest (size and SHA-256) before anything is reset. With reset enabled the
+configured `database.reset` mode runs first, then the dump is piped into
+`pg_restore`/`mysql`/`mongorestore`.
+
+| Option | Meaning |
+|---|---|
+| `-f, --from <PATH>` | Backup directory or dump file (required) |
+| `--no-reset` | Do not reset the local database first |
+| `--dry-run` | Print commands only |
+| `--force` | Allow restoring with `env=production` |
+
+## `verify`
+
+```bash
+cloner verify --dir /var/backups/myapp
+```
+
+Prints a JSON report (`ok`, `manifestOk`, `dumpPresent`, `sizeOk`,
+`sha256Ok`) and exits non-zero when the backup is incomplete or tampered with.
+
+## `k8s cronjob`
+
+Render a nightly `pg_dump` CronJob that uploads to object storage without a
+CSI driver: an init container writes the dump to an `emptyDir`, an `rclone`
+container uploads it, and retention is left to a bucket lifecycle rule.
+
+```bash
+cloner k8s cronjob \
+  --bucket yc:blog-db-backups/postgres \
+  --secret blog-backup \
+  --schedule "30 3 * * *" \
+  --out cronjob.yml
+```
+
+The database name, user and host come from `dl.js` (or `--database`, `--user`,
+`--host`, `--port`, `--engine`). The generated Secret is expected to contain
+`PGPASSWORD`, `S3_ACCESS_KEY` and `S3_SECRET_KEY`.
+
+| Option | Meaning |
+|---|---|
+| `--bucket <DEST>` | rclone destination (required) |
+| `--name <NAME>` | CronJob name (default `<database>-backup`) |
+| `--schedule <CRON>` | Schedule (default `30 3 * * *`) |
+| `--time-zone <TZ>` | IANA time zone (default `Europe/Minsk`) |
+| `--secret <NAME>` | Secret name (default `db-backup`) |
+| `--remote-name <NAME>` | rclone remote name (default `yc`) |
+| `--s3-endpoint`, `--s3-region` | Object storage endpoint and region |
+| `--dump-image`, `--upload-image` | Container images |
+| `--size-limit <SIZE>` | `emptyDir` limit (default `512Mi`) |
+| `-o, --out <FILE>` | Write YAML to a file instead of stdout |
+| `--force` | Overwrite an existing output file |
 
 ## `validate`
 

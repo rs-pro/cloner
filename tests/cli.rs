@@ -47,7 +47,9 @@ fn help_lists_all_commands() {
     let dir = tempfile::tempdir().unwrap();
     let output = success(cloner(dir.path(), &["--help"]));
     let text = stdout(&output);
-    for command in ["run", "backup", "validate", "init", "db"] {
+    for command in [
+        "run", "backup", "validate", "init", "db", "restore", "verify", "k8s",
+    ] {
         assert!(text.contains(command), "missing {command} in help:\n{text}");
     }
 }
@@ -199,4 +201,129 @@ fn db_migrate_and_seed_dry_run_use_rake() {
         ));
         assert!(stdout(&output).contains(&format!("bundle exec rake {task}")));
     }
+}
+
+#[test]
+fn k8s_cronjob_renders_a_manifest_for_the_dsl_database() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("dl.js"),
+        r#"
+        module.exports = {
+          local: { root: __dirname, env: "development" },
+          database: {
+            engine: "postgres",
+            local: { database: "blog", user: "blog", password: "secret" },
+          },
+        };
+        "#,
+    )
+    .unwrap();
+
+    let output = success(cloner(
+        dir.path(),
+        &["k8s", "cronjob", "--bucket", "yc:blog-db-backups/postgres"],
+    ));
+    let text = stdout(&output);
+    for expected in [
+        "kind: CronJob",
+        "name: blog-backup",
+        "PGDATABASE",
+        "pg_dump --format=custom",
+        "rclone",
+        "S3_DEST",
+        "emptyDir",
+    ] {
+        assert!(text.contains(expected), "missing {expected:?} in:\n{text}");
+    }
+
+    let out = dir.path().join("cronjob.yml");
+    let output = success(cloner(
+        dir.path(),
+        &[
+            "k8s",
+            "cronjob",
+            "--bucket",
+            "yc:blog-db-backups/postgres",
+            "--out",
+            out.to_str().unwrap(),
+        ],
+    ));
+    assert!(stdout(&output).contains("wrote"));
+    assert!(std::fs::read_to_string(&out).unwrap().contains("CronJob"));
+}
+
+#[test]
+fn verify_reports_a_stored_backup() {
+    use cloner::backup::{Manifest, ManifestDatabase};
+
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("dump")).unwrap();
+    let dump = dir.path().join("dump/cloner.bak");
+    std::fs::write(&dump, b"dump-bytes").unwrap();
+    let mut manifest = Manifest::new("dl.js", dir.path().to_str().unwrap(), "development");
+    manifest.database = Some(ManifestDatabase {
+        engine: "postgres".into(),
+        database: "app".into(),
+        user: "app".into(),
+    });
+    manifest.set_dump(&dump).unwrap();
+    manifest.write(dir.path()).unwrap();
+
+    let output = success(cloner(
+        dir.path(),
+        &["verify", "--dir", dir.path().to_str().unwrap()],
+    ));
+    let text = stdout(&output);
+    assert!(text.contains("\"ok\": true"));
+    assert!(text.contains("\"sha256Ok\": true"));
+
+    std::fs::write(&dump, b"tampered").unwrap();
+    let output = cloner(
+        dir.path(),
+        &["verify", "--dir", dir.path().to_str().unwrap()],
+    );
+    assert!(!output.status.success());
+    assert!(stdout(&output).contains("\"ok\": false"));
+}
+
+#[test]
+fn restore_dry_run_uses_a_stored_dump() {
+    use cloner::backup::Manifest;
+
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("dl.js"),
+        r#"
+        module.exports = {
+          local: { root: __dirname, env: "development" },
+          database: {
+            engine: "postgres",
+            reset: "drop-create",
+            local: { database: "app_development", user: "app", password: "secret" },
+          },
+        };
+        "#,
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.path().join("backup/dump")).unwrap();
+    let dump = dir.path().join("backup/dump/cloner.bak");
+    std::fs::write(&dump, b"dump-bytes").unwrap();
+    let mut manifest = Manifest::new("dl.js", dir.path().to_str().unwrap(), "development");
+    manifest.set_dump(&dump).unwrap();
+    manifest.write(&dir.path().join("backup")).unwrap();
+
+    let output = success(cloner(
+        dir.path(),
+        &[
+            "restore",
+            "--from",
+            dir.path().join("backup").to_str().unwrap(),
+            "--dry-run",
+        ],
+    ));
+    let text = stdout(&output);
+    assert!(text.contains("dropdb"), "{text}");
+    assert!(text.contains("pg_restore"), "{text}");
+    assert!(text.contains("cloner.bak"), "{text}");
 }

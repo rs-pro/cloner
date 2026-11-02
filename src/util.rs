@@ -5,11 +5,6 @@ use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-/// Quote one argument for a POSIX shell.
-pub fn shq(value: &str) -> String {
-    shell_words::quote(value).into_owned()
-}
-
 /// Join a remote POSIX path without touching the local filesystem.
 pub fn remote_join(base: &str, child: &str) -> String {
     if base.is_empty() || base == "." {
@@ -58,84 +53,6 @@ pub fn expand_tilde(value: &str) -> PathBuf {
         return home.join(rest);
     }
     PathBuf::from(value)
-}
-
-/// The shell used to run local commands. Commands are always built with POSIX
-/// quoting (`shq`), so a POSIX shell is required on every platform.
-pub struct LocalShell {
-    pub program: PathBuf,
-}
-
-pub fn local_shell() -> Result<LocalShell> {
-    let program = std::env::var_os("CLONER_SHELL")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .or_else(default_shell)
-        .ok_or_else(|| {
-            anyhow!(
-                "no POSIX shell found for local commands; install Git for Windows \
-                 (https://git-scm.com/downloads), which provides sh.exe, or set CLONER_SHELL"
-            )
-        })?;
-    Ok(LocalShell { program })
-}
-
-#[cfg(not(windows))]
-fn default_shell() -> Option<PathBuf> {
-    find_in_path("sh").or_else(|| first_existing(&[PathBuf::from("/bin/sh")]))
-}
-
-#[cfg(windows)]
-fn default_shell() -> Option<PathBuf> {
-    for name in ["sh", "bash"] {
-        if let Some(found) = find_in_path(name) {
-            return Some(found);
-        }
-    }
-    // Git for Windows ships sh.exe next to the git the user already has.
-    let mut candidates = Vec::new();
-    for env_name in ["ProgramFiles", "ProgramFiles(x86)"] {
-        if let Some(base) = std::env::var_os(env_name) {
-            let base = PathBuf::from(base);
-            candidates.push(base.join(r"Git\bin\sh.exe"));
-            candidates.push(base.join(r"Git\usr\bin\sh.exe"));
-        }
-    }
-    if let Some(base) = std::env::var_os("LOCALAPPDATA") {
-        candidates.push(PathBuf::from(base).join(r"Programs\Git\bin\sh.exe"));
-    }
-    first_existing(&candidates)
-}
-
-/// First path that exists as a file.
-fn first_existing(candidates: &[PathBuf]) -> Option<PathBuf> {
-    candidates.iter().find(|path| path.is_file()).cloned()
-}
-
-fn find_in_path(name: &str) -> Option<PathBuf> {
-    let entries = std::env::var_os("PATH")?;
-    for dir in std::env::split_paths(&entries) {
-        if dir.as_os_str().is_empty() {
-            continue;
-        }
-        #[cfg(windows)]
-        if dir
-            .file_name()
-            .is_some_and(|part| part.eq_ignore_ascii_case("WindowsApps"))
-        {
-            // App Execution Aliases (e.g. the WSL `bash` stub) are reparse
-            // points, not usable shells.
-            continue;
-        }
-        #[cfg(windows)]
-        let candidates = vec![dir.join(name), dir.join(format!("{name}.exe"))];
-        #[cfg(not(windows))]
-        let candidates = vec![dir.join(name)];
-        if let Some(found) = first_existing(&candidates) {
-            return Some(found);
-        }
-    }
-    None
 }
 
 pub fn resolve_path(base: &Path, value: &str) -> PathBuf {
@@ -382,96 +299,6 @@ mod tests {
         assert_eq!(interpolate("${EMPTY:-fallback}", &env).unwrap(), "fallback");
         assert_eq!(interpolate("${EMPTY-fallback}", &env).unwrap(), "");
         assert!(interpolate("${MISSING:?required}", &env).is_err());
-    }
-
-    #[test]
-    fn quotes_shell_arguments() {
-        assert_eq!(shq("plain"), "plain");
-        assert_eq!(shq("two words"), "'two words'");
-        assert_eq!(shq(""), "''");
-        assert_eq!(shq("it's"), "'it'\\''s'");
-        assert_eq!(shq("/tmp/a b/c"), "'/tmp/a b/c'");
-    }
-
-    #[test]
-    fn joins_remote_paths() {
-        assert_eq!(remote_join("/srv/app", "tmp"), "/srv/app/tmp");
-        assert_eq!(remote_join("/srv/app/", "tmp"), "/srv/app/tmp");
-        assert_eq!(remote_join("/srv/app", "/tmp"), "/srv/app/tmp");
-        assert_eq!(remote_join("", "tmp"), "tmp");
-        assert_eq!(remote_join(".", "tmp"), "tmp");
-        assert_eq!(remote_join("/srv/app", ""), "/srv/app");
-    }
-
-    #[test]
-    fn resolves_relative_and_absolute_paths() {
-        let base = Path::new("/project");
-        assert_eq!(
-            resolve_path(base, "uploads"),
-            PathBuf::from("/project/uploads")
-        );
-        assert_eq!(
-            resolve_path(base, "/var/lib/app"),
-            PathBuf::from("/var/lib/app")
-        );
-        assert_eq!(
-            resolve_path(base, "./dev-docker/.env"),
-            PathBuf::from("/project/./dev-docker/.env")
-        );
-    }
-
-    #[test]
-    fn expands_tilde_using_home() {
-        let home = home_dir();
-        let expanded = expand_tilde("~/.ssh/id_ed25519");
-        match home {
-            Some(home) => assert_eq!(expanded, home.join(".ssh/id_ed25519")),
-            None => assert_eq!(expanded, PathBuf::from("~/.ssh/id_ed25519")),
-        }
-        assert_eq!(expand_tilde("~user/file"), PathBuf::from("~user/file"));
-    }
-
-    #[test]
-    fn strips_windows_verbatim_prefixes() {
-        assert_eq!(
-            clean_path(PathBuf::from(r"\\?\C:\srv\app\dl.js")),
-            PathBuf::from(r"C:\srv\app\dl.js")
-        );
-        assert_eq!(
-            clean_path(PathBuf::from(r"\\?\UNC\server\share\dl.js")),
-            PathBuf::from(r"\\server\share\dl.js")
-        );
-        assert_eq!(
-            clean_path(PathBuf::from(r"C:\srv\app\dl.js")),
-            PathBuf::from(r"C:\srv\app\dl.js")
-        );
-        assert_eq!(
-            clean_path(PathBuf::from("/srv/app/dl.js")),
-            PathBuf::from("/srv/app/dl.js")
-        );
-    }
-
-    #[test]
-    fn picks_the_first_existing_shell_candidate() {
-        let dir = tempfile::tempdir().unwrap();
-        let shell = dir.path().join("sh.exe");
-        std::fs::write(&shell, b"").unwrap();
-        let missing = dir.path().join("bash.exe");
-        assert_eq!(
-            first_existing(&[missing.clone(), shell.clone()]),
-            Some(shell.clone())
-        );
-        assert_eq!(first_existing(&[missing]), None);
-    }
-
-    #[test]
-    fn resolves_a_local_shell() {
-        let shell = local_shell().expect("a POSIX shell is available");
-        assert!(
-            shell.program == Path::new("sh") || shell.program.is_file(),
-            "unexpected shell {}",
-            shell.program.display()
-        );
     }
 
     #[test]

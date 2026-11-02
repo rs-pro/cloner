@@ -75,6 +75,14 @@ local: {
     service: "db",          // optional; auto-detected
   },
   envFile: "dev-docker/.env", // optional; default: <compose.path>/.env
+
+  // Alternative to compose: run database commands inside a Kubernetes pod.
+  kubernetes: {
+    context: "prod",
+    namespace: "app",
+    selector: "app.kubernetes.io/name=postgres", // or pod: "postgres-0"
+    container: "postgres",
+  },
 }
 ```
 
@@ -84,6 +92,9 @@ local: {
   are still accepted as deprecated fallbacks.
 - When `local.compose` is present, database commands run inside the database
   container with `docker compose exec -T <service>`.
+- When `local.kubernetes` is present it wins over `compose`: commands run with
+  `kubectl exec`, and the container environment is read once to resolve database
+  credentials that are not set explicitly in the DSL.
 - If `envFile` is omitted, the file `<compose.path>/.env` is used when it
   exists.
 
@@ -105,6 +116,13 @@ remote: {
   passwordEnv: "PROD_SSH_PASSWORD",
   strictHostKeyChecking: true,
   knownHosts: "~/.ssh/known_hosts",
+
+  // Alternative to compose on the remote host.
+  kubernetes: {
+    namespace: "app",
+    selector: "app.kubernetes.io/name=postgres",
+    container: "postgres",
+  },
 }
 ```
 
@@ -122,6 +140,25 @@ logged and the key is accepted; use `true` for production hosts.
 
 Remote commands are always executed through `sh -lc`, so hosts whose login
 shell is `fish` (or another non-POSIX shell) work correctly.
+
+### Kubernetes
+
+`kubernetes` is supported on both `local` and `remote` and replaces `compose`
+for database commands:
+
+| Field | Meaning |
+|---|---|
+| `context` | `kubectl --context` value (optional) |
+| `namespace` | `kubectl --namespace` value (optional) |
+| `pod` | Explicit pod name |
+| `selector` | Label selector used once to resolve a running pod when `pod` is absent |
+| `container` | `kubectl exec --container` value (optional) |
+
+`kubectl` must be available where the command runs: locally for `local`,
+on the SSH host for `remote`. If only `selector` is set, Cloner resolves it to a
+running pod with `kubectl get pods -l <selector> --field-selector=status.phase=Running`.
+The pod environment (`env`) is then read to fill in database credentials that
+are missing from the DSL.
 
 ## `database`
 
@@ -219,7 +256,7 @@ symlinks are supported.
 ```js
 backup: {
   destination: "backups",  // relative to local.root
-  keep: 7,                 // reserved for retention tooling
+  keep: 7,                 // keep the 7 newest timestamped backup directories
 }
 ```
 
@@ -230,8 +267,12 @@ cloner backup --to /var/backups/myapp
 ```
 
 This dumps the database to `<to>/dump/`, syncs configured files to
-`<to>/files/`, and writes `<to>/manifest.json` with timestamps, sizes and file
-counts. It does not reset or restore the local database.
+`<to>/files/`, and writes `<to>/manifest.json` with timestamps, sizes, SHA-256
+of the dump and file counts. It does not reset or restore the local database.
+
+When `backup.keep` is set and no explicit `--to` is passed, backups are written
+to `<destination>/<timestamp>` and older directories are pruned after a
+successful run. Explicit `--to` directories are never pruned automatically.
 
 ## `hooks`
 

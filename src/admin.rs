@@ -1,9 +1,17 @@
+//! `cloner db create/reset/drop/migrate/seed` administration.
+//!
+//! The SQL and the execution target are separate: [`crate::engine`] builds the
+//! statements, [`crate::runtime`] decides whether they run on the host, in a
+//! Compose service or in a Kubernetes pod.
+
 use anyhow::{Result, anyhow, bail};
 use std::path::{Path, PathBuf};
 
-use crate::config::{Engine, ResolvedCompose};
-use crate::db::{compose_prefix, mysql_shell, run_local};
-use crate::util::shq;
+use crate::engine::{
+    Engine, ResolvedDb, mongo_string, mysql_ident, mysql_literal, pg_ident, pg_literal,
+};
+use crate::runtime::CommandTarget;
+use crate::shell::{self, shq};
 
 #[derive(Clone, Debug)]
 pub struct AdminOptions {
@@ -19,7 +27,7 @@ pub struct AdminOptions {
     pub no_drop: bool,
     pub no_create: bool,
     pub set_password: Option<String>,
-    pub compose: Option<ResolvedCompose>,
+    pub target: CommandTarget,
     pub service: Option<String>,
     pub project_root: PathBuf,
     pub hstore: bool,
@@ -30,8 +38,8 @@ pub struct AdminOptions {
 }
 
 impl AdminOptions {
-    fn service(&self) -> &str {
-        self.service.as_deref().unwrap_or("db")
+    fn service(&self) -> Option<&str> {
+        self.service.as_deref().filter(|s| !s.is_empty())
     }
 
     fn owner(&self) -> Result<&str> {
@@ -39,6 +47,24 @@ impl AdminOptions {
             bail!("owner/user name is required (pass it as an argument or use --owner)");
         }
         Ok(&self.owner)
+    }
+
+    /// Connection info for the maintenance database or the target database.
+    fn db(&self, database: &str) -> ResolvedDb {
+        ResolvedDb {
+            engine: self.engine,
+            host: self.host.clone(),
+            port: self.port,
+            database: database.to_string(),
+            user: self.user.clone(),
+            password: self.password.clone(),
+            service: self.service.clone(),
+            in_container: !self.target.is_host(),
+        }
+    }
+
+    fn auth_db(&self) -> ResolvedDb {
+        self.db(&self.auth_db)
     }
 }
 
@@ -95,7 +121,7 @@ fn finish(opts: &AdminOptions) -> Result<()> {
 
 fn run_rails(opts: &AdminOptions, task: &str) -> Result<()> {
     log::info!("running bundle exec rake {task}");
-    run_local(
+    shell::run(
         &format!("bundle exec rake {task}"),
         Some(&opts.project_root),
         &[],
@@ -107,12 +133,13 @@ fn run_rails(opts: &AdminOptions, task: &str) -> Result<()> {
 }
 
 fn ensure_started(opts: &AdminOptions) -> Result<()> {
-    let Some(compose) = &opts.compose else {
+    let Some(prefix) = opts.target.compose_prefix() else {
         return Ok(());
     };
-    log::info!("starting local compose service {}", opts.service());
-    run_local(
-        &format!("{} up -d {}", compose_prefix(compose), shq(opts.service())),
+    let service = opts.service().unwrap_or("db");
+    log::info!("starting local compose service {service}");
+    shell::run(
+        &format!("{prefix} up -d {}", shq(service)),
         None,
         &[],
         None,
@@ -133,138 +160,43 @@ fn ensure_started(opts: &AdminOptions) -> Result<()> {
 }
 
 fn ping(opts: &AdminOptions) -> Result<()> {
-    match opts.engine {
-        Engine::Postgres => {
-            let command = format!("{} -tAc 'SELECT 1'", pg_base(opts, &opts.auth_db));
-            run_local(&command, None, &[], None, false).map(|_| ())
-        }
-        Engine::Mysql => {
-            let command = format!("{} --execute 'SELECT 1'", mysql_base(opts, None));
-            run_local(&command, None, &[], None, false).map(|_| ())
-        }
-        Engine::Mongo => {
-            let command = format!("{} --eval 'db.runCommand({{ping:1}}).ok'", mongo_base(opts));
-            run_local(&command, None, &[], None, false).map(|_| ())
-        }
-    }
+    let db = opts.auth_db();
+    let command = opts.target.wrap(opts.service(), &db.ping_command())?;
+    shell::run(&command, None, &[], None, false).map(|_| ())
 }
 
 // ---------------------------------------------------------------------------
-// SQL helpers
+// Statement execution
 
-fn ident(value: &str) -> String {
-    format!("\"{}\"", value.replace('"', "\"\""))
-}
-
-fn literal(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "''"))
-}
-
-fn mysql_ident(value: &str) -> String {
-    format!("`{}`", value.replace('`', "``"))
-}
-
-fn mysql_literal(value: &str) -> String {
-    format!("'{}'", value.replace('\\', "\\\\").replace('\'', "\\'"))
-}
-
-fn pg_base(opts: &AdminOptions, dbname: &str) -> String {
-    if let Some(compose) = &opts.compose {
-        format!(
-            "{} exec -T {} env PGHOST=localhost PGPORT=5432 PGUSER={} PGPASSWORD={} psql -v ON_ERROR_STOP=1 -U {} -d {}",
-            compose_prefix(compose),
-            shq(opts.service()),
-            shq(&opts.user),
-            shq(&opts.password),
-            shq(&opts.user),
-            shq(dbname)
-        )
+fn run_sql(opts: &AdminOptions, db: &ResolvedDb, sql: &str, scalar: bool) -> Result<String> {
+    let command = if scalar {
+        db.scalar_command(sql)
     } else {
-        format!(
-            "PGPASSWORD={} psql -v ON_ERROR_STOP=1 -h {} -p {} -U {} -d {}",
-            shq(&opts.password),
-            shq(&opts.host),
-            shq(&opts.port.to_string()),
-            shq(&opts.user),
-            shq(dbname)
-        )
-    }
+        db.query_command(sql)
+    };
+    let command = opts.target.wrap(opts.service(), &command)?;
+    let output = shell::run(&command, None, &[], None, opts.dry_run)?;
+    Ok(output.stdout.trim().to_string())
 }
 
 fn pg_exec(opts: &AdminOptions, dbname: &str, sql: &str) -> Result<String> {
-    let command = format!("{} -tAc {}", pg_base(opts, dbname), shq(sql));
-    let output = run_local(&command, None, &[], None, opts.dry_run)?;
-    Ok(output.stdout.trim().to_string())
+    run_sql(opts, &opts.db(dbname), sql, true)
 }
 
 fn pg_script(opts: &AdminOptions, dbname: &str, sql: &str) -> Result<()> {
-    let command = format!("{} -c {}", pg_base(opts, dbname), shq(sql));
-    run_local(&command, None, &[], None, opts.dry_run).map(|_| ())
+    run_sql(opts, &opts.db(dbname), sql, false).map(|_| ())
 }
 
-fn mysql_base(opts: &AdminOptions, dbname: Option<&str>) -> String {
-    let mut args = vec![format!("--user={}", shq(&opts.user))];
-    if !opts.password.is_empty() {
-        args.push(format!("--password={}", shq(&opts.password)));
-    }
-    args.push(format!("--host={}", shq(&opts.host)));
-    args.push(format!("--port={}", shq(&opts.port.to_string())));
-    if let Some(dbname) = dbname
-        && !dbname.is_empty()
-    {
-        args.push(shq(dbname));
-    }
-    let client = mysql_shell("mysql", "mariadb", &args);
-    if let Some(compose) = &opts.compose {
-        format!(
-            "{} exec -T {} {}",
-            compose_prefix(compose),
-            shq(opts.service()),
-            client
-        )
-    } else {
-        client
-    }
-}
-
-fn mysql_exec(opts: &AdminOptions, dbname: Option<&str>, sql: &str) -> Result<String> {
-    let command = format!("{} --execute {}", mysql_base(opts, dbname), shq(sql));
-    let output = run_local(&command, None, &[], None, opts.dry_run)?;
-    Ok(output.stdout.trim().to_string())
-}
-
-fn mongo_base(opts: &AdminOptions) -> String {
-    let mut parts = vec!["mongosh".to_string(), "--quiet".to_string()];
-    if let Some(compose) = &opts.compose {
-        parts = vec![
-            format!("{} exec -T", compose_prefix(compose)),
-            shq(opts.service()),
-            "mongosh".to_string(),
-            "--quiet".to_string(),
-        ];
-    }
-    parts.push(format!("--host {}", shq(&opts.host)));
-    parts.push(format!("--port {}", shq(&opts.port.to_string())));
-    if !opts.user.is_empty() {
-        parts.push(format!("--username {}", shq(&opts.user)));
-        if !opts.password.is_empty() {
-            parts.push(format!("--password {}", shq(&opts.password)));
-        }
-        if !opts.auth_db.is_empty() {
-            parts.push(format!("--authenticationDatabase {}", shq(&opts.auth_db)));
-        }
-    }
-    parts.join(" ")
+fn mysql_exec(opts: &AdminOptions, sql: &str) -> Result<String> {
+    run_sql(opts, &opts.db(""), sql, false)
 }
 
 fn mongo_eval(opts: &AdminOptions, script: &str) -> Result<String> {
-    let command = format!("{} --eval {}", mongo_base(opts), shq(script));
-    let output = run_local(&command, None, &[], None, opts.dry_run)?;
+    let db = opts.db("");
+    let command = db.mongo_eval_command_auth(script, &opts.auth_db);
+    let command = opts.target.wrap(opts.service(), &command)?;
+    let output = shell::run(&command, None, &[], None, opts.dry_run)?;
     Ok(output.stdout.trim().to_string())
-}
-
-fn mongo_string(value: &str) -> String {
-    serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -297,7 +229,10 @@ fn pg_create(opts: &AdminOptions) -> Result<()> {
     let role_exists = !opts.dry_run
         && pg_exists(
             opts,
-            &format!("SELECT 1 FROM pg_roles WHERE rolname = {}", literal(owner)),
+            &format!(
+                "SELECT 1 FROM pg_roles WHERE rolname = {}",
+                pg_literal(owner)
+            ),
         )?;
     if !role_exists {
         log::info!("creating role {owner}");
@@ -306,8 +241,8 @@ fn pg_create(opts: &AdminOptions) -> Result<()> {
             &opts.auth_db,
             &format!(
                 "CREATE ROLE {} LOGIN PASSWORD {}",
-                ident(owner),
-                literal(password)
+                pg_ident(owner),
+                pg_literal(password)
             ),
         )?;
     } else if opts.set_password.is_some() {
@@ -317,8 +252,8 @@ fn pg_create(opts: &AdminOptions) -> Result<()> {
             &opts.auth_db,
             &format!(
                 "ALTER ROLE {} WITH PASSWORD {}",
-                ident(owner),
-                literal(password)
+                pg_ident(owner),
+                pg_literal(password)
             ),
         )?;
     }
@@ -328,7 +263,7 @@ fn pg_create(opts: &AdminOptions) -> Result<()> {
             opts,
             &format!(
                 "SELECT 1 FROM pg_database WHERE datname = {}",
-                literal(&opts.dbname)
+                pg_literal(&opts.dbname)
             ),
         )?;
     if !db_exists {
@@ -338,8 +273,8 @@ fn pg_create(opts: &AdminOptions) -> Result<()> {
             &opts.auth_db,
             &format!(
                 "CREATE DATABASE {} OWNER {}",
-                ident(&opts.dbname),
-                ident(owner)
+                pg_ident(&opts.dbname),
+                pg_ident(owner)
             ),
         )?;
     }
@@ -348,14 +283,14 @@ fn pg_create(opts: &AdminOptions) -> Result<()> {
         &opts.auth_db,
         &format!(
             "GRANT ALL PRIVILEGES ON DATABASE {} TO {}",
-            ident(&opts.dbname),
-            ident(owner)
+            pg_ident(&opts.dbname),
+            pg_ident(owner)
         ),
     )?;
     pg_script(
         opts,
         &opts.dbname,
-        &format!("GRANT ALL ON SCHEMA public TO {}", ident(owner)),
+        &format!("GRANT ALL ON SCHEMA public TO {}", pg_ident(owner)),
     )?;
     Ok(())
 }
@@ -367,7 +302,7 @@ fn pg_reset(opts: &AdminOptions) -> Result<()> {
         opts,
         &format!(
             "SELECT 1 FROM pg_database WHERE datname = {}",
-            literal(&opts.dbname)
+            pg_literal(&opts.dbname)
         ),
     )?;
     if !exists {
@@ -381,7 +316,7 @@ fn pg_reset(opts: &AdminOptions) -> Result<()> {
         pg_script(
             opts,
             &opts.dbname,
-            &format!("DROP SCHEMA IF EXISTS {} CASCADE", ident(&opts.schema)),
+            &format!("DROP SCHEMA IF EXISTS {} CASCADE", pg_ident(&opts.schema)),
         )?;
     }
     if !opts.no_create {
@@ -395,8 +330,8 @@ fn pg_reset(opts: &AdminOptions) -> Result<()> {
             &opts.dbname,
             &format!(
                 "CREATE SCHEMA {} AUTHORIZATION {}",
-                ident(&opts.schema),
-                ident(owner)
+                pg_ident(&opts.schema),
+                pg_ident(owner)
             ),
         )?;
         if opts.schema != "public" {
@@ -405,8 +340,8 @@ fn pg_reset(opts: &AdminOptions) -> Result<()> {
                 &opts.dbname,
                 &format!(
                     "GRANT ALL ON SCHEMA {} TO {}",
-                    ident(&opts.schema),
-                    ident(owner)
+                    pg_ident(&opts.schema),
+                    pg_ident(owner)
                 ),
             )?;
         }
@@ -422,7 +357,7 @@ fn pg_drop(opts: &AdminOptions) -> Result<()> {
         &opts.auth_db,
         &format!(
             "DROP DATABASE IF EXISTS {} WITH (FORCE)",
-            ident(&opts.dbname)
+            pg_ident(&opts.dbname)
         ),
     )
 }
@@ -433,19 +368,19 @@ fn pg_drop(opts: &AdminOptions) -> Result<()> {
 fn mysql_create(opts: &AdminOptions) -> Result<()> {
     let owner = opts.owner()?;
     let password = opts.set_password.as_deref().unwrap_or(owner);
+    let user_literal = owner.replace('\'', "''");
     log::info!("creating mysql database {} and user {owner}", opts.dbname);
     mysql_exec(
         opts,
-        None,
         &format!(
             "CREATE DATABASE IF NOT EXISTS {}; CREATE USER IF NOT EXISTS '{}'@'%' IDENTIFIED BY {}; ALTER USER '{}'@'%' IDENTIFIED BY {}; GRANT ALL PRIVILEGES ON {}.* TO '{}'@'%'; FLUSH PRIVILEGES;",
             mysql_ident(&opts.dbname),
-            owner.replace('\'', "''"),
+            user_literal,
             mysql_literal(password),
-            owner.replace('\'', "''"),
+            user_literal,
             mysql_literal(password),
             mysql_ident(&opts.dbname),
-            owner.replace('\'', "''"),
+            user_literal,
         ),
     )?;
     Ok(())
@@ -458,7 +393,6 @@ fn mysql_reset(opts: &AdminOptions) -> Result<()> {
     log::info!("resetting mysql database {}", opts.dbname);
     mysql_exec(
         opts,
-        None,
         &format!(
             "DROP DATABASE IF EXISTS {}; CREATE DATABASE {};",
             mysql_ident(&opts.dbname),
@@ -472,7 +406,6 @@ fn mysql_drop(opts: &AdminOptions) -> Result<()> {
     log::info!("dropping mysql database {}", opts.dbname);
     mysql_exec(
         opts,
-        None,
         &format!("DROP DATABASE IF EXISTS {}", mysql_ident(&opts.dbname)),
     )?;
     Ok(())
@@ -559,7 +492,7 @@ mod tests {
             no_drop: false,
             no_create: false,
             set_password: None,
-            compose: None,
+            target: CommandTarget::Host,
             service: None,
             project_root: PathBuf::from("/project"),
             hstore: false,
@@ -571,37 +504,13 @@ mod tests {
     }
 
     #[test]
-    fn quotes_postgres_identifiers_and_literals() {
-        assert_eq!(ident("public"), "\"public\"");
-        assert_eq!(ident("we\"ird"), "\"we\"\"ird\"");
-        assert_eq!(literal("plain"), "'plain'");
-        assert_eq!(literal("it's"), "'it''s'");
-    }
-
-    #[test]
-    fn quotes_mysql_identifiers_and_literals() {
-        assert_eq!(mysql_ident("app"), "`app`");
-        assert_eq!(mysql_ident("we`ird"), "`we``ird`");
-        assert_eq!(mysql_literal("plain"), "'plain'");
-        assert_eq!(mysql_literal("back\\slash"), "'back\\\\slash'");
-        assert_eq!(mysql_literal("it's"), "'it\\'s'");
-    }
-
-    #[test]
-    fn encodes_mongo_strings_as_json() {
-        assert_eq!(mongo_string("plain"), "\"plain\"");
-        assert_eq!(mongo_string("it's"), "\"it's\"");
-        assert_eq!(mongo_string("line\nbreak"), "\"line\\nbreak\"");
-    }
-
-    #[test]
     fn service_and_owner_defaults() {
         let mut opts = options(Engine::Postgres);
-        assert_eq!(opts.service(), "db");
+        assert_eq!(opts.service(), None);
         assert_eq!(opts.owner().unwrap(), "app");
 
         opts.service = Some("rtdb".into());
-        assert_eq!(opts.service(), "rtdb");
+        assert_eq!(opts.service(), Some("rtdb"));
 
         opts.owner = "  ".into();
         assert!(opts.owner().is_err());
@@ -610,54 +519,72 @@ mod tests {
     #[test]
     fn builds_postgres_commands() {
         let opts = options(Engine::Postgres);
-        let command = pg_base(&opts, "app_development");
+        let command = opts.auth_db().query_command("SELECT 1");
         assert!(command.contains("PGPASSWORD=secret"));
         assert!(command.contains("psql -v ON_ERROR_STOP=1"));
         assert!(command.contains("-h localhost"));
         assert!(command.contains("-p 5432"));
         assert!(command.contains("-U postgres"));
-        assert!(command.contains("-d app_development"));
+        assert!(command.contains("-d postgres"));
     }
 
     #[test]
     fn builds_postgres_compose_commands() {
         let mut opts = options(Engine::Postgres);
-        opts.compose = Some(ResolvedCompose {
-            path: "/project/dev-docker".into(),
-            file: "compose.yml".into(),
-            service: None,
-        });
-        let command = pg_base(&opts, "app_development");
+        opts.target = CommandTarget::compose("/project/dev-docker", "compose.yml");
+        opts.service = Some("db".into());
+        let command = opts
+            .target
+            .wrap(opts.service(), &opts.auth_db().query_command("SELECT 1"))
+            .unwrap();
         assert!(command.contains("docker compose -f compose.yml exec -T db"));
-        assert!(command.contains("PGHOST=localhost PGPORT=5432"));
-        assert!(command.contains("-d app_development"));
+        assert!(command.contains("PGPASSWORD=secret"));
+        assert!(command.contains("-d postgres"));
+    }
+
+    #[test]
+    fn builds_kubernetes_commands() {
+        let mut opts = options(Engine::Postgres);
+        opts.target = CommandTarget::kubernetes(crate::k8s::KubernetesTarget {
+            namespace: Some("app".into()),
+            pod: Some("pg-0".into()),
+            ..Default::default()
+        });
+        let command = opts
+            .target
+            .wrap(opts.service(), &opts.auth_db().query_command("SELECT 1"))
+            .unwrap();
+        assert!(command.starts_with("kubectl --namespace app exec pg-0"));
+        assert!(command.contains("psql"));
     }
 
     #[test]
     fn builds_mysql_commands_with_mariadb_fallback() {
         let opts = options(Engine::Mysql);
-        let command = mysql_base(&opts, Some("app_development"));
+        let command = opts.db("").query_command("SELECT 1");
         assert!(command.starts_with("sh -lc 'if command -v mysql"));
         assert!(command.contains("mariadb"));
-        assert!(command.contains("--user=postgres"));
+        assert!(command.contains("--user postgres"));
         assert!(command.contains("--password=secret"));
-        assert!(command.contains("--host=localhost"));
-        assert!(command.contains("--port=3306"));
-        assert!(command.ends_with("app_development"));
+        assert!(command.contains("--host localhost"));
+        assert!(command.contains("--port 3306"));
+        assert!(command.contains("-e 'SELECT 1'"));
     }
 
     #[test]
     fn omits_empty_mysql_password() {
         let mut opts = options(Engine::Mysql);
         opts.password.clear();
-        let command = mysql_base(&opts, None);
+        let command = opts.db("").query_command("SELECT 1");
         assert!(!command.contains("--password"));
     }
 
     #[test]
     fn builds_mongo_commands_with_and_without_auth() {
         let opts = options(Engine::Mongo);
-        let command = mongo_base(&opts);
+        let command = opts
+            .db("")
+            .mongo_eval_command_auth("db.ping()", &opts.auth_db);
         assert!(command.contains("mongosh --quiet"));
         assert!(command.contains("--host localhost"));
         assert!(command.contains("--port 27017"));
@@ -667,7 +594,9 @@ mod tests {
 
         let mut anonymous = options(Engine::Mongo);
         anonymous.user.clear();
-        let command = mongo_base(&anonymous);
+        let command = anonymous
+            .db("")
+            .mongo_eval_command_auth("db.ping()", "admin");
         assert!(!command.contains("--username"));
         assert!(!command.contains("--password"));
     }

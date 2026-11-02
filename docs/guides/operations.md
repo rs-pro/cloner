@@ -35,6 +35,28 @@ rustup target add x86_64-unknown-linux-musl
 cargo build --release --target x86_64-unknown-linux-musl
 ```
 
+## Kubernetes
+
+Set `local.kubernetes` or `remote.kubernetes` instead of `compose`:
+
+```js
+kubernetes: {
+  context: "prod",                 // optional
+  namespace: "app",                // optional
+  pod: "postgres-0",               // or selector
+  selector: "app.kubernetes.io/name=postgres",
+  container: "postgres",           // optional
+}
+```
+
+`kubectl` must be on the machine that runs the command (locally for `local`,
+on the SSH host for `remote`). A selector is resolved once to a running pod;
+the pod environment is read to fill in missing database credentials.
+
+For a nightly dump that does not use a CSI volume, generate a CronJob with
+`cloner k8s cronjob --bucket <rclone-dest>`. Retention belongs in the bucket
+lifecycle rule, not in the pod.
+
 ## SSH
 
 - Authentication tries the SSH agent first, then key files, then password.
