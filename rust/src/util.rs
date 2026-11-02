@@ -127,9 +127,10 @@ fn find_in_path(name: &str) -> Option<PathBuf> {
             // points, not usable shells.
             continue;
         }
-        let mut candidates = vec![dir.join(name)];
         #[cfg(windows)]
-        candidates.push(dir.join(format!("{name}.exe")));
+        let candidates = vec![dir.join(name), dir.join(format!("{name}.exe"))];
+        #[cfg(not(windows))]
+        let candidates = vec![dir.join(name)];
         if let Some(found) = first_existing(&candidates) {
             return Some(found);
         }
