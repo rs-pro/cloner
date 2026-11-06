@@ -533,7 +533,9 @@ pub fn execute_with_extensions(
             return Ok(());
         }
 
-        call_hook(&ctx, &exports, "beforeAll")?;
+        if !options.dry_run {
+            call_hook(&ctx, &exports, "beforeAll")?;
+        }
         if !options.skip_database && !options.skip_files {
             log::info!("mode: {:?}", options.mode);
         }
@@ -549,7 +551,9 @@ pub fn execute_with_extensions(
             write_manifest(&state)?;
         }
 
-        call_hook(&ctx, &exports, "afterAll")?;
+        if !options.dry_run {
+            call_hook(&ctx, &exports, "afterAll")?;
+        }
         run_extension_hooks(&ctx, &exports, extensions)?;
         Ok(())
     })
@@ -851,6 +855,10 @@ fn run_database_core<'js>(
         return Ok(());
     }
 
+    // Hooks may change the machine (stopping services, running migrations), so a
+    // dry run must not execute them.
+    let hooks = if dry_run { None } else { hooks };
+
     if let Some((ctx, exports)) = hooks {
         call_hook(ctx, exports, "beforeDatabase")?;
     }
@@ -941,6 +949,7 @@ fn run_files_core<'js>(
         log::info!("no files configured, skipping file step");
         return Ok(Vec::new());
     }
+    let hooks = if dry_run { None } else { hooks };
     if let Some((ctx, exports)) = hooks {
         call_hook(ctx, exports, "beforeFiles")?;
     }
@@ -1545,6 +1554,39 @@ mod tests {
         assert_eq!(config.files.len(), 1);
         assert_eq!(config.files[0].from, "uploads");
         assert_eq!(config.files[0].exclude, ["*.tmp"]);
+    }
+
+    #[test]
+    fn dry_run_skips_hooks() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("hook-marker");
+        let path = config_file(
+            &dir,
+            "dl.js",
+            &format!(
+                r#"
+                module.exports = {{
+                  local: {{ root: __dirname, env: "test" }},
+                  hooks: {{
+                    beforeAll() {{ shell("touch {}"); }},
+                  }},
+                }};
+                "#,
+                marker.display()
+            ),
+        );
+        execute_with_extensions(
+            &path,
+            RunOptions {
+                dry_run: true,
+                ..RunOptions::default()
+            },
+            &[],
+        )
+        .unwrap();
+        assert!(!marker.exists(), "dry run must not execute hooks");
+        execute_with_extensions(&path, RunOptions::default(), &[]).unwrap();
+        assert!(marker.exists(), "hooks must run for a real run");
     }
 
     #[test]
